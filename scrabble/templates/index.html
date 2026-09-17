@@ -1,0 +1,313 @@
+<!-- scrabble - Developed by acidvegas in Python (https://github.com/acidvegas) -->
+<!-- index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="theme-color" content="#08080f">
+	<title>Scrabble</title>
+	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ cache_v }}">
+</head>
+<body>
+	<div id="app">
+		<header class="topbar">
+			<div class="game-mode-info" id="game-mode-info"></div>
+			<div id="no-moves-banner" class="no-moves-banner hidden"></div>
+			<div id="score-bar">
+				<div class="score-half p0" id="score-tag-p0">
+					<span class="player-label" id="name-label-0">P1</span>
+					<span class="player-score" id="score-val-0">0</span>
+				</div>
+				<div class="score-half p1" id="score-tag-p1">
+					<span class="player-score" id="score-val-1">0</span>
+					<span class="player-label" id="name-label-1">P2</span>
+				</div>
+			</div>
+			<div class="score-row score-row-sub">
+				<span class="turn-indicator" id="turn-indicator"></span>
+			</div>
+		</header>
+
+		<main class="board-wrap">
+			<div id="board"></div>
+		</main>
+
+		<div id="info-panel">
+			<div id="last-box" class="info-box hidden" role="button" tabindex="0">
+				<span id="last-summary"></span>
+				<span class="last-chevron">›</span>
+			</div>
+			<button id="btn-history" class="history-btn hidden" type="button" aria-label="Game history" title="Game history">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><polyline points="12 7 12 12 15 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+			</button>
+		</div>
+
+		<div id="message-bar"></div>
+
+		<footer class="rack-wrap">
+			<div id="rack"></div>
+			<div class="actions">
+				<button class="btn btn-submit" id="btn-submit" title="Submit" aria-label="Submit">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>
+				</button>
+				<button class="btn btn-recall" id="btn-recall" title="Recall tiles" aria-label="Recall">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5h-4"/></svg>
+				</button>
+				<button class="btn btn-menu" id="btn-menu" title="More actions" aria-label="More actions">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="17" x2="19" y2="17"/></svg>
+					<span id="hint-star" class="hint-star hidden" aria-label="Hint tokens available">★</span>
+					<span id="chat-badge" class="chat-badge hidden">0</span>
+				</button>
+			</div>
+		</footer>
+	</div>
+
+	<div id="landing-overlay" class="overlay">
+		<div class="overlay-box">
+			<h2>Scrabble</h2>
+			<div id="auth-status" class="auth-status">
+				<span id="auth-status-text">Playing as guest</span>
+				<button class="auth-link" id="btn-show-auth">Sign in</button>
+				<button class="auth-link hidden" id="btn-show-profile">My stats</button>
+				<button class="auth-link hidden" id="btn-logout">Log out</button>
+			</div>
+			<input type="text" id="landing-name-input" maxlength="9" autocomplete="off" spellcheck="false" placeholder="PLAYER">
+			<div class="mode-picker">
+				<span class="mode-label">Mode</span>
+				<div class="mode-options">
+					<button class="mode-opt selected" data-mode="classic">Classic</button>
+					<button class="mode-opt" data-mode="random">Random</button>
+				</div>
+				<div class="toggle-grid">
+					<label class="speed-toggle">
+						<input type="checkbox" id="speed-checkbox">
+						<span class="check-visual" aria-hidden="true"></span>
+						<span class="speed-text">Speed</span>
+					</label>
+					<label class="speed-toggle">
+						<input type="checkbox" id="challenge-checkbox">
+						<span class="check-visual" aria-hidden="true"></span>
+						<span class="speed-text">Challenge</span>
+					</label>
+					<label class="speed-toggle">
+						<input type="checkbox" id="transparent-checkbox">
+						<span class="check-visual" aria-hidden="true"></span>
+						<span class="speed-text">Transparent</span>
+					</label>
+					<label class="speed-toggle">
+						<input type="checkbox" id="vs-computer-checkbox">
+						<span class="check-visual" aria-hidden="true"></span>
+						<span class="speed-text">AI</span>
+					</label>
+				</div>
+				<div class="players-picker" id="players-picker">
+					<span class="mode-label">Players</span>
+					<div class="players-options">
+						<button class="players-opt selected" data-players="2">2</button>
+						<button class="players-opt" data-players="3">3</button>
+						<button class="players-opt" data-players="4">4</button>
+					</div>
+				</div>
+				<div class="difficulty-picker hidden" id="difficulty-picker">
+					<span class="mode-label">Difficulty <span id="difficulty-value">50</span></span>
+					<input type="range" id="difficulty-slider" min="1" max="100" value="50">
+				</div>
+				<label class="speed-toggle hidden" id="stacker-toggle-wrap">
+					<input type="checkbox" id="stacker-checkbox">
+					<span class="check-visual" aria-hidden="true"></span>
+					<span class="speed-text">Stacker (AI plays for most words)</span>
+				</label>
+			</div>
+			<div id="landing-error" class="join-error"></div>
+			<div class="landing-buttons">
+				<button class="btn btn-ready" id="btn-create-room">Create Room</button>
+				<button class="btn btn-ready landing-join" id="btn-show-join">Join Room</button>
+				<button class="btn btn-cancel" id="btn-show-leaderboard">Leaderboard</button>
+			</div>
+			<div id="active-rooms" class="active-rooms hidden"></div>
+			<div id="landing-online" class="landing-online">…</div>
+			<div id="full-room-popup" class="full-room-popup hidden"></div>
+		</div>
+	</div>
+
+	<div id="auth-overlay" class="overlay hidden">
+		<div class="overlay-box auth-box">
+			<div class="auth-tabs">
+				<button class="auth-tab selected" id="auth-tab-login">Log in</button>
+				<button class="auth-tab" id="auth-tab-signup">Sign up</button>
+			</div>
+			<div class="auth-field">
+				<label class="auth-label" for="auth-username">Username</label>
+				<input type="text" id="auth-username" maxlength="16" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="3-16 chars, letters/digits/_">
+			</div>
+			<div class="auth-field">
+				<label class="auth-label" for="auth-password">Password</label>
+				<div class="auth-password-wrap">
+					<input type="password" id="auth-password" maxlength="128" autocomplete="current-password" placeholder="At least 6 characters">
+					<button type="button" id="auth-password-toggle" class="auth-password-toggle" aria-label="Show password" title="Show password">
+						<svg class="eye-show" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+						<svg class="eye-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="2"/></svg>
+					</button>
+				</div>
+			</div>
+			<div id="auth-captcha-row" class="auth-field hidden">
+				<label class="auth-label">Type the characters below</label>
+				<div class="captcha-wrap">
+					<div id="auth-captcha-image" class="captcha-image"></div>
+					<button type="button" id="auth-captcha-refresh" class="captcha-refresh" title="New captcha">↻</button>
+				</div>
+				<input type="text" id="auth-captcha-answer" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter the characters">
+			</div>
+			<div id="auth-error" class="join-error"></div>
+			<div class="landing-buttons">
+				<button class="btn btn-ready" id="btn-auth-submit">Log in</button>
+				<button class="btn btn-cancel" id="btn-auth-cancel">Cancel</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="profile-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2 id="profile-username">My stats</h2>
+			<div id="profile-content"></div>
+			<button class="btn btn-cancel" id="btn-profile-close">Close</button>
+		</div>
+	</div>
+
+	<div id="join-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2>Join Room</h2>
+			<p>Enter the 4-character room code from your friend.</p>
+			<input type="text" id="join-room-input" maxlength="4" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcd">
+			<div id="join-error" class="join-error"></div>
+			<div class="landing-buttons">
+				<button class="btn btn-ready" id="btn-join-confirm">Join</button>
+				<button class="btn btn-cancel" id="btn-join-cancel">Cancel</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="name-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2>Change Name</h2>
+			<p>Letters only, up to 9 characters.</p>
+			<input type="text" id="name-input" maxlength="9" autocomplete="off" spellcheck="false">
+			<div id="name-error" class="join-error"></div>
+			<div class="landing-buttons">
+				<button class="btn btn-ready" id="btn-name-save">Save</button>
+				<button class="btn btn-cancel" id="btn-name-cancel">Cancel</button>
+			</div>
+		</div>
+	</div>
+
+<div id="menu-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<div class="landing-buttons">
+				<button class="btn btn-ready menu-bag" id="btn-menu-bag">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8 L19 8 L18.5 21 a1.5 1.5 0 0 1 -1.5 1.5 L7 22.5 a1.5 1.5 0 0 1 -1.5 -1.5 Z"/><path d="M8 8 V6 a4 4 0 0 1 8 0 V8"/></svg>
+					<span>BAG</span>
+				</button>
+				<button class="btn btn-ready menu-swap" id="btn-menu-swap">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><line x1="3" y1="5" x2="21" y2="5"/><polyline points="7 23 3 19 7 15"/><line x1="3" y1="19" x2="21" y2="19"/></svg>
+					<span>SWAP</span>
+				</button>
+				<button class="btn btn-ready menu-pass" id="btn-menu-pass">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 4 16 12 5 20 5 4" fill="currentColor" stroke="none"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+					<span>PASS</span>
+				</button>
+				<button class="btn btn-ready menu-hint hidden" id="btn-menu-hint">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 a7 7 0 0 0 -4 12.7 V17 h8 v-2.3 A7 7 0 0 0 12 2 Z" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="9" y1="20" x2="15" y2="20" stroke="currentColor" stroke-width="1.8"/><line x1="10" y1="22" x2="14" y2="22" stroke="currentColor" stroke-width="1.8"/></svg>
+					<span>HINT<span id="hint-badge" class="hint-badge hidden">1</span></span>
+				</button>
+				<button class="btn btn-ready menu-challenge hidden" id="btn-menu-challenge">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 L12 14"/><circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+					<span>CHALLENGE</span>
+				</button>
+				<button class="btn btn-ready menu-chat" id="btn-menu-chat">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5 L20 5 a1 1 0 0 1 1 1 L21 16 a1 1 0 0 1 -1 1 L11 17 L6 21 L6 17 L4 17 a1 1 0 0 1 -1 -1 L3 6 a1 1 0 0 1 1 -1 Z"/></svg>
+					<span>CHAT<span id="chat-badge-menu" class="chat-badge hidden">0</span></span>
+				</button>
+				<button class="btn btn-ready menu-lobby" id="btn-menu-lobby">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12 L12 4 L21 12" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 11 L5 21 L19 21 L19 11" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+					<span>LOBBY</span>
+				</button>
+				<button class="btn btn-ready landing-leave" id="btn-menu-forfeit">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="3" x2="5" y2="22"/><path d="M5 4 L19 4 L16 9 L19 14 L5 14 Z" fill="currentColor" stroke="none"/></svg>
+					<span>FORFEIT</span>
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="endgame-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2 id="endgame-title">Game Over</h2>
+			<div id="endgame-body"></div>
+			<div id="rematch-status" class="rematch-status"></div>
+			<div class="landing-buttons">
+				<button class="btn btn-ready" id="btn-rematch">Play again</button>
+				<button class="btn btn-cancel hidden" id="btn-rematch-decline">Decline</button>
+				<button class="btn btn-cancel" id="btn-endgame-quit">Quit to lobby</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="chat-overlay" class="overlay hidden">
+		<div class="overlay-box chat-box">
+			<h2>Chat</h2>
+			<div id="chat-messages" class="chat-messages"></div>
+			<div class="chat-input-row">
+				<input type="text" id="chat-input" maxlength="100" placeholder="Say something (max 100 chars)">
+				<button class="btn btn-ready chat-send-btn" id="btn-chat-send">Send</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="bag-overlay" class="overlay hidden">
+		<div class="overlay-box bag-box">
+			<h2>Unseen tiles</h2>
+			<div id="bag-grid" class="bag-grid"></div>
+			<div id="bag-total" class="bag-total"></div>
+		</div>
+	</div>
+
+	<div id="leaderboard-overlay" class="overlay hidden">
+		<div class="overlay-box leaderboard-box">
+			<h2>Leaderboard</h2>
+			<div id="leaderboard-content"></div>
+			<button class="btn btn-cancel" id="btn-leaderboard-close">Close</button>
+		</div>
+	</div>
+
+	<div id="history-overlay" class="overlay hidden">
+		<div class="overlay-box history-box">
+			<h2>History</h2>
+			<div id="history-list" class="history-list"></div>
+			<button class="btn btn-cancel" id="btn-history-close">Close</button>
+		</div>
+	</div>
+
+	<div id="def-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2>Definitions</h2>
+			<div id="def-list"></div>
+		</div>
+	</div>
+
+	<div id="blank-overlay" class="overlay hidden">
+		<div class="overlay-box">
+			<h2>Choose a letter</h2>
+			<p>Pick which letter this blank represents.</p>
+			<div id="blank-letters"></div>
+			<button class="btn btn-cancel" id="btn-blank-cancel">Cancel</button>
+		</div>
+	</div>
+
+	<script src="{{ url_for('static', filename='script.js') }}?v={{ cache_v }}"></script>
+</body>
+</html>
