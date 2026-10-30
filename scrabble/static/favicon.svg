@@ -1,0 +1,10 @@
+<!-- scrabble - Developed by acidvegas in Python (https://github.com/acidvegas) -->
+<!-- favicon.svg -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+	<rect x="2" y="2" width="60" height="60" rx="8" fill="#ffe49f"/>
+	<rect x="2" y="2" width="60" height="58" rx="8" fill="#fff" opacity="0.35"/>
+	<rect x="2" y="2" width="60" height="60" rx="8" fill="none" stroke="#2b2b3d" stroke-opacity="0.25" stroke-width="2"/>
+	<text x="29" y="45" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="bold" text-anchor="middle" fill="#2b2b3d">S</text>
+	<text x="53" y="56" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#2b2b3d">1</text>
+</svg>
