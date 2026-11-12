@@ -7,6 +7,8 @@ import sqlite3
 import threading
 import time
 
+import arcade
+
 
 DATA_DIR = os.environ.get('SCRABBLE_DATA_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data'))
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -219,6 +221,7 @@ def record_play_metrics(words, player_name, score, room_id, mode='classic', user
 		meta_set(top_key, {
 			'words': words,
 			'player': player_name,
+			'user_id': user_id,
 			'score': score,
 			'room_id': room_id,
 			'at': int(time.time()),
@@ -231,6 +234,7 @@ def record_play_metrics(words, player_name, score, room_id, mode='classic', user
 			longest = {
 				'word': w.upper(),
 				'player': player_name,
+				'user_id': user_id,
 				'score': score,
 				'room_id': room_id,
 				'at': int(time.time()),
@@ -312,6 +316,20 @@ def _record_user_game_end(user_id, result):
 			c.commit()
 
 
+def push_arcade_stats(user_id: int):
+	'''Send a player's summary to acid-arcade-db in a background thread. Does nothing in standalone mode.'''
+
+	if not arcade.enabled():
+		return
+	with db_connect() as c:
+		row   = c.execute('SELECT games_played, wins, losses, draws, longest_win_streak, highest_play_score FROM user_stats WHERE user_id=?', (user_id,)).fetchone()
+		words = c.execute('SELECT COALESCE(SUM(count), 0) FROM user_word_counts WHERE user_id=?', (user_id,)).fetchone()[0]
+	if not row:
+		return
+	stats = {'Games': row['games_played'], 'Wins': row['wins'], 'Losses': row['losses'], 'Draws': row['draws'], 'Best streak': row['longest_win_streak'], 'Best play': row['highest_play_score'], 'Words played': words}
+	threading.Thread(target=send_arcade_stats, args=(user_id, row['wins'], stats), daemon=True).start()
+
+
 def record_game_end(room, reason):
 	game = room['game']
 	mode = game.get('mode', 'classic')
@@ -340,15 +358,27 @@ def record_game_end(room, reason):
 				_record_user_game_end(uid, 'loss')
 		if not uid:
 			continue
-		others = [(room['names'][i] or f'P{i + 1}', game['scores'][i]) for i in range(max_players) if i != slot]
-		top_other = max(others, key=lambda x: x[1]) if others else (None, 0)
+		push_arcade_stats(uid)
+		others = [(room['names'][i] or f'P{i + 1}', game['scores'][i], user_ids[i] if i < len(user_ids) else None) for i in range(max_players) if i != slot]
+		top_other = max(others, key=lambda x: x[1]) if others else (None, 0, None)
 		top_game = meta_get(top_key)
 		if top_game is None or s > top_game.get('score', 0):
 			meta_set(top_key, {
 				'player': name,
+				'user_id': uid,
 				'score': s,
 				'opponent': top_other[0] or 'P?',
+				'opponent_user_id': top_other[2],
 				'opponent_score': top_other[1],
 				'reason': reason,
 				'at': int(time.time()),
 			})
+
+
+def send_arcade_stats(user_id: int, main: float, stats: dict):
+	'''Push a player's summary to acid-arcade-db, printing instead of raising on failure.'''
+
+	try:
+		arcade.push_stats(user_id, main, stats)
+	except Exception as e:
+		print(f'arcade push_stats({user_id}) failed: {e}')

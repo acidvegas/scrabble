@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+# scrabble - Developed by acidvegas in Python (https://github.com/acidvegas)
+# tests/test_app.py
+
+import os
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+os.environ['SCRABBLE_DATA_DIR'] = tempfile.mkdtemp(prefix='scrabble_test_')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scrabble'))
+
+import app as server
+import arcade
+import auth
+import storage
+
+
+class TestApp(unittest.TestCase):
+	'''HTTP API tests against an in-process app with a throwaway database.'''
+
+	def setUp(self):
+		'''Create a test client.'''
+
+		self.client = server.app.test_client()
+
+
+	def call(self, path: str, body: dict = None, auth_token: str = '') -> tuple:
+		'''Make a GET or POST request and return (JSON reply, status).'''
+
+		headers = {'X-Auth-Token': auth_token}
+		resp    = self.client.get(path, headers=headers) if body is None else self.client.post(path, json=body, headers=headers)
+		return resp.get_json(), resp.status_code
+
+
+	def test_standalone_auth(self):
+		'''Local signup, login, me and logout work without acid-arcade-db.'''
+
+		self.assertFalse(arcade.enabled())
+		cap, _ = self.call('/auth/captcha')
+		data, status = self.call('/auth/signup', {'username': 'alice', 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': 'WRONG'})
+		self.assertEqual((data['error'], status), ('Captcha incorrect or expired', 400))
+		cap, _ = self.call('/auth/captcha')
+		text   = auth.CAPTCHAS[cap['captcha_id']][0]
+		data, status = self.call('/auth/signup', {'username': 'alice', 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': text.lower()})
+		self.assertEqual((status, data['username']), (200, 'alice'))
+		self.assertEqual(self.call('/auth/me', auth_token=data['auth_token'])[0]['user']['username'], 'alice')
+		self.assertEqual(self.call('/auth/stats', auth_token=data['auth_token'])[0]['games_played'], 0)
+		cap, _ = self.call('/auth/captcha')
+		text   = auth.CAPTCHAS[cap['captcha_id']][0]
+		self.assertEqual(self.call('/auth/signup', {'username': 'alice', 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': text})[1], 409)
+		self.assertEqual(self.call('/auth/login', {'username': 'alice', 'password': 'nope'})[1], 401)
+		data, status = self.call('/auth/login', {'username': 'alice', 'password': 'hunter22x'})
+		self.assertEqual(status, 200)
+		self.call('/auth/logout', {'auth_token': data['auth_token']})
+		self.assertIsNone(self.call('/auth/me', auth_token=data['auth_token'])[0]['user'])
+		self.assertIn('ARCADE_PUBLIC_URL = "";', self.client.get('/').get_data(as_text=True))
+
+
+	def test_standalone_no_cookie(self):
+		'''Standalone mode never sets the shared sign-in cookie and has no /auth/sso.'''
+
+		cap  = self.call('/auth/captcha')[0]
+		text = auth.CAPTCHAS[cap['captcha_id']][0]
+		resp = self.client.post('/auth/signup', json={'username': 'dave', 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': text})
+		replies = [resp, self.client.post('/auth/login', json={'username': 'dave', 'password': 'hunter22x'}), self.client.get('/auth/me', headers={'X-Auth-Token': resp.get_json()['auth_token']}), self.client.post('/auth/logout', json={'auth_token': resp.get_json()['auth_token']})]
+		for r in replies:
+			self.assertEqual(r.headers.getlist('Set-Cookie'), [])
+		self.assertEqual(self.client.get('/auth/sso').status_code, 404)
+
+
+class TestArcade(unittest.TestCase):
+	'''acid-arcade-db mode with the arcade client functions mocked out.'''
+
+	USERS = {'tok-a': {'user_id': 1001, 'username': 'arcadeann', 'admin': False}, 'tok-b': {'user_id': 1002, 'username': 'arcadebob', 'admin': False}}
+
+	def setUp(self):
+		'''Turn arcade mode on and fake its session lookup.'''
+
+		self.client  = server.app.test_client()
+		self.patches = [mock.patch.object(arcade, 'enabled', return_value=True), mock.patch.object(arcade, 'ARCADE_PUBLIC', 'https://arcade.{domain}'), mock.patch.object(arcade, 'session', side_effect=lambda t: self.USERS.get(t)), mock.patch.object(arcade, 'push_stats')]
+		for p in self.patches:
+			p.start()
+
+
+	def tearDown(self):
+		'''Turn arcade mode back off.'''
+
+		for p in self.patches:
+			p.stop()
+
+
+	def call(self, path: str, body: dict = None, auth_token: str = '') -> tuple:
+		'''Make a GET or POST request and return (JSON reply, status).'''
+
+		headers = {'X-Auth-Token': auth_token}
+		resp    = self.client.get(path, headers=headers) if body is None else self.client.post(path, json=body, headers=headers)
+		return resp.get_json(), resp.status_code
+
+
+	def user_row(self, user_id: int):
+		'''Return a mirror users row or None.'''
+
+		with storage.db_connect() as c:
+			return c.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+
+
+	def test_auth_proxy(self):
+		'''Auth routes proxy to acid-arcade-db and keep the reply shapes.'''
+
+		with mock.patch.object(arcade, 'captcha', return_value={'captcha_id': 'c1', 'svg': '<svg/>'}):
+			self.assertEqual(self.call('/auth/captcha')[0], {'captcha_id': 'c1', 'svg': '<svg/>'})
+		with mock.patch.object(arcade, 'signup', return_value={'token': 'tok-a', 'user_id': 1001, 'username': 'arcadeann'}) as signup:
+			data, _ = self.call('/auth/signup', {'username': 'arcadeann', 'password': 'pw123456', 'captcha_id': 'c1', 'captcha_answer': 'ABCDE'})
+			signup.assert_called_once_with('arcadeann', 'pw123456', 'c1', 'ABCDE', '127.0.0.1')
+			self.assertEqual((data['auth_token'], data['username']), ('tok-a', 'arcadeann'))
+		with mock.patch.object(arcade, 'login', side_effect=arcade.ArcadeError('wrong username or password', 401)):
+			self.assertEqual(self.call('/auth/login', {'username': 'x', 'password': 'y'}), ({'error': 'wrong username or password'}, 401))
+		with mock.patch.object(arcade, 'login', return_value={'token': 'tok-a', 'user_id': 1001, 'username': 'arcadeann'}):
+			self.assertEqual(self.call('/auth/login', {'username': 'arcadeann', 'password': 'pw123456'})[0]['auth_token'], 'tok-a')
+		with mock.patch.object(arcade, 'logout') as logout:
+			self.call('/auth/logout', {'auth_token': 'tok-a'})
+			logout.assert_called_once_with('tok-a')
+		with mock.patch.object(arcade, 'session', side_effect=arcade.ArcadeDown('refused')):
+			self.assertEqual(self.call('/auth/me', auth_token='tok-a'), ({'error': 'account server is down'}, 503))
+			self.assertEqual(self.call('/create_room', {'name': 'X'}, 'tok-a')[1], 503)
+		self.assertIsNone(self.call('/auth/me', auth_token='bogus')[0]['user'])
+		self.assertIn('ARCADE_PUBLIC_URL = "https://arcade.localhost"', self.client.get('/').get_data(as_text=True))
+
+
+	def test_game_end_push_and_sync(self):
+		'''Mirror rows appear on first use, game end pushes stats, and renames and deletes are applied.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'}, 'tok-a')
+		self.assertEqual(self.user_row(1001)['password_hash'], '')
+		with storage.db_connect() as c:
+			self.assertIsNotNone(c.execute('SELECT * FROM user_stats WHERE user_id=1001').fetchone())
+		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'}, 'tok-b')
+		s, _ = self.call(f'/state?room_id={a["room_id"]}&player_token={b["player_token"]}')
+		self.assertEqual((s['user_ids'], s['names']), ([1001, 1002], ['arcadeann', 'arcadebob']))
+		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
+		end = time.time() + 5
+		while not arcade.push_stats.called and time.time() < end:
+			time.sleep(0.02)
+		user_id, main, stats = arcade.push_stats.call_args[0]
+		self.assertEqual((user_id, main, stats['Games'], stats['Wins'], stats['Losses']), (1002, 1, 1, 1, 0))
+		storage.meta_set('top_play_classic', {'words': ['QI'], 'player': 'arcadebob', 'user_id': 1002, 'score': 11, 'room_id': 'x', 'at': 0})
+		with mock.patch.object(arcade, 'changes', return_value={'now': 50.0, 'changed': [{'user_id': 1002, 'username': 'arcadeann'}, {'user_id': 1001, 'username': 'annie'}], 'deleted': []}):
+			self.assertEqual(auth.arcade_sync(0), 50.0)
+		self.assertEqual((self.user_row(1001)['username'], self.user_row(1002)['username']), ('annie', 'arcadeann'))
+		top = self.call('/leaderboard')[0]['classic']['top_play']
+		self.assertEqual((top['player'], top['user_id']), ('arcadeann', 1002))
+		with mock.patch.object(arcade, 'changes', return_value={'now': 60.0, 'changed': [], 'deleted': [1002]}):
+			auth.arcade_sync(50.0)
+		self.assertIsNone(self.user_row(1002))
+		with storage.db_connect() as c:
+			self.assertIsNone(c.execute('SELECT * FROM user_stats WHERE user_id=1002').fetchone())
+		top = self.call('/leaderboard')[0]['classic']['top_play']
+		self.assertEqual((top['player'], top['user_id']), ('arcadebob', None))
+
+
+	def test_player_ip_and_domain(self):
+		'''Login and signup forward the player's IP from X-Forwarded-For, a 429 passes through, and the arcade URL follows the request host.'''
+
+		xff = {'X-Forwarded-For': '203.0.113.7'}
+		with mock.patch.object(server.app.wsgi_app, 'x_for', 1):
+			with mock.patch.object(arcade, 'login', return_value={'token': 'tok-a', 'user_id': 1001, 'username': 'arcadeann'}) as login:
+				self.client.post('/auth/login', json={'username': 'arcadeann', 'password': 'pw123456'}, headers=xff)
+				login.assert_called_once_with('arcadeann', 'pw123456', '203.0.113.7')
+			with mock.patch.object(arcade, 'signup', return_value={'token': 'tok-a', 'user_id': 1001, 'username': 'arcadeann'}) as signup:
+				self.client.post('/auth/signup', json={'username': 'arcadeann', 'password': 'pw123456', 'captcha_id': 'c1', 'captcha_answer': 'ABCDE'}, headers=xff)
+				signup.assert_called_once_with('arcadeann', 'pw123456', 'c1', 'ABCDE', '203.0.113.7')
+		with mock.patch.object(arcade, 'login', side_effect=arcade.ArcadeError('too many failed logins, try again later', 429)):
+			self.assertEqual(self.call('/auth/login', {'username': 'x', 'password': 'y'}), ({'error': 'too many failed logins, try again later'}, 429))
+		with mock.patch.object(arcade, 'signup', side_effect=arcade.ArcadeError('too many new accounts, try again later', 429)):
+			self.assertEqual(self.call('/auth/signup', {'username': 'x', 'password': 'y', 'captcha_id': 'c1', 'captcha_answer': 'A'})[1], 429)
+		for host, url in (('scrabble.supernets.org', 'https://arcade.supernets.org'), ('scrabble.acid.vegas', 'https://arcade.acid.vegas')):
+			self.assertIn(f'ARCADE_PUBLIC_URL = "{url}"', self.client.get('/', base_url=f'https://{host}').get_data(as_text=True))
+
+
+	def test_sso_cookies(self):
+		'''Login sets the shared cookie, /auth/sso swaps it for a session, logout clears it and /auth/me shares an existing session.'''
+
+		with mock.patch.object(arcade, 'login', return_value={'token': 'tok-a', 'user_id': 1001, 'username': 'arcadeann'}):
+			resp = self.client.post('/auth/login', json={'username': 'arcadeann', 'password': 'pw123456'})
+		self.assertTrue(any(c.startswith(f'{arcade.COOKIE}=tok-a;') for c in resp.headers.getlist('Set-Cookie')))
+		with mock.patch.object(arcade, 'sso', side_effect=lambda t: {'token': 'tok-new', 'user_id': 1001, 'username': 'arcadeann'} if t == 'tok-a' else None) as sso:
+			data = self.client.get('/auth/sso').get_json()
+			self.assertEqual(data, {'auth_token': 'tok-new', 'username': 'arcadeann', 'user_id': 1001})
+			sso.assert_called_with('tok-a')
+			self.client.delete_cookie(arcade.COOKIE)
+			resp = self.client.get('/auth/sso')
+			self.assertEqual(resp.status_code, 401)
+			self.assertTrue(any(c.startswith(f'{arcade.COOKIE}=;') for c in resp.headers.getlist('Set-Cookie')))
+		resp = self.client.get('/auth/me', headers={'X-Auth-Token': 'tok-a'})
+		self.assertEqual(resp.get_json()['user']['username'], 'arcadeann')
+		self.assertTrue(any(c.startswith(f'{arcade.COOKIE}=tok-a;') for c in resp.headers.getlist('Set-Cookie')))
+		resp = self.client.get('/auth/me', headers={'X-Auth-Token': 'tok-a'})
+		self.assertEqual(resp.headers.getlist('Set-Cookie'), [])
+		with mock.patch.object(arcade, 'logout') as logout:
+			resp = self.client.post('/auth/logout', json={'auth_token': 'tok-a'})
+			logout.assert_called_once_with('tok-a')
+		self.assertTrue(any(c.startswith(f'{arcade.COOKIE}=;') for c in resp.headers.getlist('Set-Cookie')))
+		with mock.patch.object(arcade, 'sso', side_effect=arcade.ArcadeDown('refused')):
+			self.client.set_cookie(arcade.COOKIE, 'tok-a')
+			self.assertEqual(self.client.get('/auth/sso').status_code, 503)
+
+
+
+if __name__ == '__main__':
+	unittest.main()

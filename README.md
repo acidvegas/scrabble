@@ -78,6 +78,18 @@ All data is written to the directory in `SCRABBLE_DATA_DIR`. It defaults to `dat
 
 Rooms with no activity for 24 hours are removed. The server holds at most 100 rooms at a time.
 
+## acid-arcade-db
+
+Scrabble can optionally use [acid-arcade-db](../acid-arcade-db) for accounts, so one username and password works on every acid-arcade game. Without `ARCADE_URL` it keeps its own accounts and needs nothing else.
+
+| Variable            | Purpose                                                                               |
+|---------------------|---------------------------------------------------------------------------------------|
+| `ARCADE_URL`        | Internal acid-arcade-db API *(e.g. `http://acid-arcade-db:20021`)*. Turns the mode on |
+| `ARCADE_PUBLIC_URL` | Public acid-arcade-db site, used for profile pictures and the account settings link. `{domain}` is replaced with the player's parent domain *(default `https://arcade.{domain}`, so scrabble.supernets.org links to arcade.supernets.org)* |
+| `ARCADE_GAME`       | This game's slug in acid-arcade-db, `scrabble`                                        |
+
+In this mode login, signup and sessions go through acid-arcade-db, and the local `users` table only mirrors those accounts. Renames and account deletions are picked up every 60 seconds, and each player's wins and stats are sent to their arcade profile when a game ends. If acid-arcade-db is down, account requests answer `503`. Running `ARCADE_URL=http://acid-arcade-db:20021 ./setup.sh` joins the container to the `arcade` Docker network and passes these variables.
+
 ---
 
 ###### Mirrors: [SuperNETs](https://git.supernets.org/acidvegas/) • [GitHub](https://github.com/acidvegas/) • [GitLab](https://gitlab.com/acidvegas/) • [Codeberg](https://codeberg.org/acidvegas/)

@@ -7,6 +7,7 @@ import threading
 import time
 from flask import request
 
+import arcade
 from storage import DB_LOCK, db_connect
 
 
@@ -17,6 +18,58 @@ CAPTCHA_LOCK = threading.Lock()
 USERNAME_RE = re.compile(r'^[A-Za-z0-9_]{3,16}$')
 CAPTCHA_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # no I/O/0/1
 CAPTCHA_COLORS = ['#ff7da0', '#ffae41', '#4dd17a', '#5fa8ff', '#b07dff', '#ffd86a', '#ff5e8a', '#7da0ff']
+ARCADE_POLL = 60
+
+
+def arcade_free_username(c, username: str, user_id: int):
+	'''Give any other mirror row still holding this username (a stale rename) a placeholder until its own update arrives.'''
+
+	c.execute("UPDATE users SET username = '#' || id WHERE username=? AND id!=?", (username, user_id))
+
+
+def arcade_mirror(user_id: int, username: str):
+	'''Create or rename the local mirror row of an acid-arcade-db account. A new row also gets what local signup creates (a user_stats row).'''
+
+	with DB_LOCK:
+		with db_connect() as c:
+			row = c.execute('SELECT username FROM users WHERE id=?', (user_id,)).fetchone()
+			if row and row['username'] == username:
+				return
+			arcade_free_username(c, username, user_id)
+			if row:
+				c.execute('UPDATE users SET username=? WHERE id=?', (username, user_id))
+			else:
+				c.execute("INSERT INTO users(id, username, password_hash, created_at) VALUES(?, ?, '', ?)", (user_id, username, int(time.time())))
+				c.execute('INSERT OR IGNORE INTO user_stats(user_id) VALUES(?)', (user_id,))
+			c.commit()
+
+
+def arcade_sync(since: float) -> float:
+	'''Apply one acid-arcade-db changes poll (renames and deletes) to the local database and return the next since.'''
+
+	data = arcade.changes(since)
+	with DB_LOCK:
+		with db_connect() as c:
+			for user in data.get('changed', []):
+				arcade_free_username(c, user['username'], user['user_id'])
+				c.execute('UPDATE users SET username=? WHERE id=?', (user['username'], user['user_id']))
+			for user_id in data.get('deleted', []):
+				for table, col in (('sessions', 'user_id'), ('user_word_counts', 'user_id'), ('user_stats', 'user_id'), ('users', 'id')):
+					c.execute(f'DELETE FROM {table} WHERE {col}=?', (user_id,))
+			c.commit()
+	return data['now']
+
+
+def arcade_sync_loop():
+	'''Poll acid-arcade-db for account changes forever.'''
+
+	since = 0
+	while True:
+		try:
+			since = arcade_sync(since)
+		except Exception as e:
+			print(f'arcade_sync error: {e}')
+		time.sleep(ARCADE_POLL)
 
 
 def captcha_render_svg(text):
@@ -125,4 +178,10 @@ def get_request_user_id():
 	token = request.headers.get('X-Auth-Token')
 	if not token and request.method != 'GET':
 		token = (request.get_json(silent=True) or {}).get('auth_token')
+	if arcade.enabled():
+		info = arcade.session(token)
+		if not info:
+			return None
+		arcade_mirror(info['user_id'], info['username'])
+		return info['user_id']
 	return get_user_id_from_token(token)
