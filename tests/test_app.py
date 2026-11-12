@@ -5,6 +5,7 @@
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -16,6 +17,14 @@ import app as server
 import arcade
 import auth
 import storage
+
+
+def wait_called(fn: mock.Mock, timeout: float = 5):
+	'''Wait for a mock to be called from a background thread.'''
+
+	end = time.time() + timeout
+	while not fn.called and time.time() < end:
+		time.sleep(0.02)
 
 
 class TestApp(unittest.TestCase):
@@ -71,6 +80,18 @@ class TestApp(unittest.TestCase):
 		self.assertEqual(self.client.get('/auth/sso').status_code, 404)
 
 
+	def test_standalone_sends_nothing(self):
+		'''Standalone mode never sends events, stats or presence to acid-arcade-db.'''
+
+		with mock.patch.object(arcade, 'event') as event, mock.patch.object(arcade, 'push_stats') as push_stats, mock.patch.object(arcade, 'call') as call:
+			storage.record_play_metrics(['QUIXOTIC'], 'dave', 120, 'x', 'random', user_id=1)
+			storage.push_arcade_event(1, 'win', 'won a Scrabble game with 1 points')
+			storage.push_arcade_stats(1)
+			time.sleep(0.1)
+			self.assertFalse(event.called or push_stats.called or call.called)
+		self.assertFalse(any(getattr(t, '_target', None) is server.presence_loop for t in threading.enumerate()))
+
+
 class TestArcade(unittest.TestCase):
 	'''acid-arcade-db mode with the arcade client functions mocked out.'''
 
@@ -80,7 +101,7 @@ class TestArcade(unittest.TestCase):
 		'''Turn arcade mode on and fake its session lookup.'''
 
 		self.client  = server.app.test_client()
-		self.patches = [mock.patch.object(arcade, 'enabled', return_value=True), mock.patch.object(arcade, 'ARCADE_PUBLIC', 'https://arcade.{domain}'), mock.patch.object(arcade, 'session', side_effect=lambda t: self.USERS.get(t)), mock.patch.object(arcade, 'push_stats')]
+		self.patches = [mock.patch.object(arcade, 'enabled', return_value=True), mock.patch.object(arcade, 'ARCADE_PUBLIC', 'https://arcade.{domain}'), mock.patch.object(arcade, 'session', side_effect=lambda t: self.USERS.get(t)), mock.patch.object(arcade, 'push_stats'), mock.patch.object(arcade, 'event')]
 		for p in self.patches:
 			p.start()
 
@@ -146,6 +167,8 @@ class TestArcade(unittest.TestCase):
 			time.sleep(0.02)
 		user_id, main, stats = arcade.push_stats.call_args[0]
 		self.assertEqual((user_id, main, stats['Games'], stats['Wins'], stats['Losses']), (1002, 1, 1, 1, 0))
+		wait_called(arcade.event)
+		arcade.event.assert_called_once_with(1002, 'win', 'won a Scrabble game with 0 points')
 		storage.meta_set('top_play_classic', {'words': ['QI'], 'player': 'arcadebob', 'user_id': 1002, 'score': 11, 'room_id': 'x', 'at': 0})
 		with mock.patch.object(arcade, 'changes', return_value={'now': 50.0, 'changed': [{'user_id': 1002, 'username': 'arcadeann'}, {'user_id': 1001, 'username': 'annie'}], 'deleted': []}):
 			self.assertEqual(auth.arcade_sync(0), 50.0)
@@ -159,6 +182,17 @@ class TestArcade(unittest.TestCase):
 			self.assertIsNone(c.execute('SELECT * FROM user_stats WHERE user_id=1002').fetchone())
 		top = self.call('/leaderboard')[0]['classic']['top_play']
 		self.assertEqual((top['player'], top['user_id']), ('arcadebob', None))
+
+
+	def test_play_record_event(self):
+		'''A play of 80+ points by an account posts one record event, smaller plays and guests post none.'''
+
+		storage.record_play_metrics(['ZA'], 'arcadeann', 79, 'x', 'random', user_id=1001)
+		storage.record_play_metrics(['QUIXOTIC', 'XI'], 'guest', 120, 'x', 'random')
+		storage.record_play_metrics(['XI', 'QUIXOTIC'], 'arcadeann', 120, 'x', 'random', user_id=1001)
+		wait_called(arcade.event)
+		time.sleep(0.1)
+		arcade.event.assert_called_once_with(1001, 'record', 'played QUIXOTIC for 120 points')
 
 
 	def test_player_ip_and_domain(self):
@@ -178,6 +212,24 @@ class TestArcade(unittest.TestCase):
 			self.assertEqual(self.call('/auth/signup', {'username': 'x', 'password': 'y', 'captcha_id': 'c1', 'captcha_answer': 'A'})[1], 429)
 		for host, url in (('scrabble.supernets.org', 'https://arcade.supernets.org'), ('scrabble.acid.vegas', 'https://arcade.acid.vegas')):
 			self.assertIn(f'ARCADE_PUBLIC_URL = "{url}"', self.client.get('/', base_url=f'https://{host}').get_data(as_text=True))
+
+
+	def test_presence(self):
+		'''Presence reports the signed in players with an event stream open, and an empty list when there are none.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'}, 'tok-a')
+		g, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'GUEST'})
+		with mock.patch.object(arcade, 'presence') as presence:
+			server.report_presence()
+			presence.assert_called_with([])
+			streams = [self.client.get(f'/events?room_id={a["room_id"]}&player_token={t}', buffered=False) for t in (a['player_token'], g['player_token'])]
+			server.report_presence()
+			presence.assert_called_with([1001])
+			for r in streams:
+				next(r.response)
+				r.close()
+			server.report_presence()
+			presence.assert_called_with([])
 
 
 	def test_sso_cookies(self):

@@ -129,6 +129,31 @@ def current_names(record: dict) -> dict:
 
 SUBSCRIBERS = {}
 SUBSCRIBERS_LOCK = threading.Lock()
+STREAM_USERS = {} # open event stream queue -> signed in user id, for arcade presence
+PRESENCE_INTERVAL = 30
+
+
+def report_presence():
+	'''Tell acid-arcade-db which signed in players have a room open right now (an event stream), printing instead of raising on failure.'''
+
+	with SUBSCRIBERS_LOCK:
+		user_ids = sorted(set(STREAM_USERS.values()))
+	try:
+		arcade.presence(user_ids)
+	except Exception as e:
+		print(f'arcade presence failed: {e}')
+
+
+def presence_loop():
+	'''Report presence to acid-arcade-db forever.'''
+
+	while True:
+		report_presence()
+		time.sleep(PRESENCE_INTERVAL)
+
+
+if arcade.enabled():
+	threading.Thread(target=presence_loop, daemon=True).start()
 
 
 def notify_room(rid):
@@ -159,9 +184,13 @@ def events():
 		if room is None:
 			return Response('event: error\ndata: invalid_room\n\n', mimetype='text/event-stream', status=404)
 		rid = room['_rid']
+		user_ids = room.get('user_ids') or []
+		uid = user_ids[_slot] if 0 <= _slot < len(user_ids) else None
 	q = queue.Queue(maxsize=64)
 	with SUBSCRIBERS_LOCK:
 		SUBSCRIBERS.setdefault(rid, []).append(q)
+		if uid is not None:
+			STREAM_USERS[q] = uid
 
 	def stream():
 		try:
@@ -178,6 +207,7 @@ def events():
 			pass
 		finally:
 			with SUBSCRIBERS_LOCK:
+				STREAM_USERS.pop(q, None)
 				subs = SUBSCRIBERS.get(rid, [])
 				if q in subs:
 					subs.remove(q)

@@ -243,6 +243,8 @@ def record_play_metrics(words, player_name, score, room_id, mode='classic', user
 	if longest:
 		meta_set(long_key, longest)
 	_update_user_play_stats(user_id, words, score)
+	if score >= ARCADE_RECORD_PLAY:
+		push_arcade_event(user_id, 'record', f'played {max(words, key=len).upper()} for {score} points')
 
 
 def _update_user_play_stats(user_id, words, score):
@@ -278,6 +280,7 @@ def _update_user_play_stats(user_id, words, score):
 
 
 HINT_TOKEN_CAP = 5
+ARCADE_RECORD_PLAY = 80
 WINS_PER_TOKEN = 5
 
 
@@ -314,6 +317,13 @@ def _record_user_game_end(user_id, result):
 				c.execute('UPDATE user_stats SET current_win_streak = 0 WHERE user_id=?', (user_id,))
 			# draw: streak preserved
 			c.commit()
+
+
+def push_arcade_event(user_id: int, kind: str, text: str):
+	'''Add a line to the acid-arcade-db activity feed in a background thread. Does nothing in standalone mode.'''
+
+	if arcade.enabled():
+		threading.Thread(target=send_arcade_event, args=(user_id, kind, text), daemon=True).start()
 
 
 def push_arcade_stats(user_id: int):
@@ -359,6 +369,8 @@ def record_game_end(room, reason):
 		if not uid:
 			continue
 		push_arcade_stats(uid)
+		if not is_draw and winner == slot:
+			push_arcade_event(uid, 'win', f'won a Scrabble game with {s} points')
 		others = [(room['names'][i] or f'P{i + 1}', game['scores'][i], user_ids[i] if i < len(user_ids) else None) for i in range(max_players) if i != slot]
 		top_other = max(others, key=lambda x: x[1]) if others else (None, 0, None)
 		top_game = meta_get(top_key)
@@ -373,6 +385,15 @@ def record_game_end(room, reason):
 				'reason': reason,
 				'at': int(time.time()),
 			})
+
+
+def send_arcade_event(user_id: int, kind: str, text: str):
+	'''Send an activity feed line to acid-arcade-db, printing instead of raising on failure.'''
+
+	try:
+		arcade.event(user_id, kind, text)
+	except Exception as e:
+		print(f'arcade event({user_id}, {kind}) failed: {e}')
 
 
 def send_arcade_stats(user_id: int, main: float, stats: dict):
