@@ -3,6 +3,8 @@
 	"name"             : "Scrabble",
 	"short_name"       : "Scrabble",
 	"description"      : "Multiplayer Scrabble in the browser.",
+	"lang"             : "en",
+	"categories"       : ["games"],
 	"start_url"        : "/",
 	"scope"            : "/",
 	"display"          : "standalone",

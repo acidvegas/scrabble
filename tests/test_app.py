@@ -2,7 +2,9 @@
 # scrabble - Developed by acidvegas in Python (https://github.com/acidvegas)
 # tests/test_app.py
 
+import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -42,6 +44,24 @@ class TestApp(unittest.TestCase):
 		headers = {'X-Auth-Token': auth_token}
 		resp    = self.client.get(path, headers=headers) if body is None else self.client.post(path, json=body, headers=headers)
 		return resp.get_json(), resp.status_code
+
+
+	def test_seo_urls(self):
+		'''Canonical, og:url, JSON-LD, robots and sitemap use SCRABBLE_PUBLIC_URL when set and the request host when not.'''
+
+		for public, expect in (('', 'https://scrabble.supernets.org/'), ('https://scrabble.acid.vegas', 'https://scrabble.acid.vegas/')):
+			with mock.patch.object(server, 'PUBLIC_URL', public):
+				html = self.client.get('/', base_url='https://scrabble.supernets.org').get_data(as_text=True)
+				self.assertIn(f'<link rel="canonical" href="{expect}">', html)
+				self.assertIn(f'<meta property="og:url" content="{expect}">', html)
+				self.assertIn(f'<meta property="og:image" content="{expect}static/og.png">', html)
+				data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html).group(1))
+				self.assertEqual((data['url'], data['image'], data['@type']), (expect, f'{expect}static/og.png', ['VideoGame', 'WebApplication']))
+				self.assertIn(f'Sitemap: {expect}sitemap.xml', self.client.get('/robots.txt', base_url='https://scrabble.supernets.org').get_data(as_text=True))
+				self.assertIn(f'<loc>{expect}</loc>', self.client.get('/sitemap.xml', base_url='https://scrabble.supernets.org').get_data(as_text=True))
+		room = self.client.get('/abcd').get_data(as_text=True)
+		self.assertIn('<meta name="robots" content="noindex">', room)
+		self.assertNotIn('rel="canonical"', room)
 
 
 	def test_standalone_auth(self):

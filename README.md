@@ -49,6 +49,8 @@ The server listens on port `1337`. If `scrabble/words/nwl2023.txt` is missing, i
 
 This builds the `scrabble` image and starts a container named `scrabble`, bound to `127.0.0.1:1337` with the `scrabble_data` volume mounted at `/data`. Put a reverse proxy in front of it to serve it publicly.
 
+If the game is reachable on more than one domain, set `SCRABBLE_PUBLIC_URL` *(e.g. `https://scrabble.acid.vegas`)* to the main one. The canonical link, share cards, robots.txt and sitemap then point there instead of at whichever host the request used. `setup.sh` passes it to the container when it is set.
+
 ## Code layout
 
 Everything the server runs lives in `scrabble/`:
