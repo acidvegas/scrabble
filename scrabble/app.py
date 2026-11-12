@@ -4,6 +4,7 @@
 import atexit
 import functools
 import json
+import os
 import queue
 import random
 import secrets
@@ -28,6 +29,7 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 
 CACHE_VERSION = int(time.time())
+PUBLIC_URL = os.environ.get('SCRABBLE_PUBLIC_URL', '').rstrip('/') # canonical site for crawlers and share cards, e.g. https://scrabble.acid.vegas (unset: the request host)
 
 ROOMS_LOCK = threading.RLock()
 MAX_ROOMS = 100
@@ -110,6 +112,33 @@ def arcade_session_reply(d: dict):
 	resp = jsonify({'auth_token': d['token'], 'username': d['username'], 'user_id': d['user_id']})
 	arcade.set_cookie(resp, request.host, d['token'])
 	return resp
+
+
+def site_url() -> str:
+	'''Return the absolute site root (with a trailing slash) for canonical and share links: SCRABBLE_PUBLIC_URL, or the request host.'''
+
+	return f'{PUBLIC_URL}/' if PUBLIC_URL else request.url_root
+
+
+def structured_data(url: str) -> str:
+	'''Return the JSON-LD description of the game for search engines.'''
+
+	return json.dumps({
+		'@context'            : 'https://schema.org',
+		'@type'               : ['VideoGame', 'WebApplication'],
+		'name'                : 'Scrabble',
+		'url'                 : url,
+		'description'         : 'Play Scrabble online for free with 2 to 4 players. Create a room and share the code, play the computer, or watch a game.',
+		'image'               : f'{url}static/og.png',
+		'applicationCategory' : 'GameApplication',
+		'operatingSystem'     : 'Any',
+		'genre'               : ['Word game', 'Board game'],
+		'gamePlatform'        : 'Web browser',
+		'playMode'            : ['SinglePlayer', 'MultiPlayer'],
+		'isAccessibleForFree' : True,
+		'offers'              : {'@type': 'Offer', 'price': '0', 'priceCurrency': 'USD'},
+		'author'              : {'@type': 'Person', 'name': 'acidvegas', 'url': 'https://github.com/acidvegas'},
+	})
 
 
 def current_names(record: dict) -> dict:
@@ -283,14 +312,14 @@ def maybe_run_ai(room):
 
 @app.route('/')
 def index():
-	return render_template('index.html', cache_v=CACHE_VERSION, url=request.url_root, room=False, arcade_public_url=arcade_public_url())
+	return render_template('index.html', cache_v=CACHE_VERSION, url=site_url(), room=False, arcade_public_url=arcade_public_url(), structured_data=structured_data(site_url()))
 
 
 @app.route('/<rid>')
 def index_with_room(rid):
 	if len(rid) != ROOM_ID_LEN or not all(c in ROOM_ID_CHARS for c in rid.lower()):
 		return 'Not found', 404
-	return render_template('index.html', cache_v=CACHE_VERSION, url=request.url_root, room=True, arcade_public_url=arcade_public_url())
+	return render_template('index.html', cache_v=CACHE_VERSION, url=site_url(), room=True, arcade_public_url=arcade_public_url())
 
 
 @app.route('/favicon.ico')
@@ -304,14 +333,14 @@ def favicon():
 def robots():
 	"""Let crawlers in and point them at the sitemap."""
 
-	return Response(f'User-agent: *\nAllow: /\nSitemap: {request.url_root}sitemap.xml\n', mimetype='text/plain')
+	return Response(f'User-agent: *\nAllow: /\nSitemap: {site_url()}sitemap.xml\n', mimetype='text/plain')
 
 
 @app.route('/sitemap.xml')
 def sitemap():
 	"""List the home page, the only page worth indexing."""
 
-	return Response(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{request.url_root}</loc></url></urlset>\n', mimetype='application/xml')
+	return Response(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{site_url()}</loc></url></urlset>\n', mimetype='application/xml')
 
 
 @app.route('/room_exists/<rid>')

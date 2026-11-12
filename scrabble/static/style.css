@@ -963,6 +963,7 @@ body.is-spectator.challenge-mode #btn-menu-challenge { display: none !important;
 	accent-color: #b07dff;
 }
 .players-picker.hidden { display: none; }
+.speed-toggle.hidden { display: none; }
 .speed-toggle.disabled { opacity: 0.4; pointer-events: none; }
 
 #info-panel { position: relative; }
