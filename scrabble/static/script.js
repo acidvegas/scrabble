@@ -39,6 +39,8 @@ const state = {
 	playerName: localStorage.getItem('scrabble_player_name') || '',
 	authToken: localStorage.getItem('scrabble_auth_token') || null,
 	authUsername: localStorage.getItem('scrabble_auth_username') || null,
+	authUserId: null,
+	userIds: [],
 	mySlot: null,
 	hasOpponent: false,
 	names: ['P1', 'P2'],
@@ -715,7 +717,7 @@ function renderScores() {
 		const pct = total === 0 ? (100 / activeSlots.length) : (sc / total) * 100;
 		const isActive = state.current === i;
 		const name = state.names[i] || `P${i + 1}`;
-		const labelHtml = `<span class="player-label" id="name-label-${i}">${escapeHtml(name)}</span>`;
+		const labelHtml = `<span class="player-label" id="name-label-${i}">${avatarHtml(state.userIds[i])}${escapeHtml(name)}</span>`;
 		const scoreHtml = `<span class="player-score" id="score-val-${i}">${sc}</span>`;
 		const innerOrder = (idx === activeSlots.length - 1) ? `${scoreHtml}${labelHtml}` : `${labelHtml}${scoreHtml}`;
 		html += `<div class="score-half p${i}${isActive ? ' active' : ''}" id="score-tag-p${i}" style="flex-basis:${pct}%">${innerOrder}</div>`;
@@ -1313,6 +1315,7 @@ async function loadState(preservePending) {
 	state.maxPlayers = s.max_players || 2;
 	state.moves = s.moves || [0, 0];
 	state.chat = s.chat || [];
+	state.userIds = s.user_ids || [];
 	state.chatSeq = s.chat_seq || 0;
 	state.finalSummary = s.final_summary || null;
 	if (!state.finalSummary) state.endgameShown = false;
@@ -2068,9 +2071,16 @@ document.querySelectorAll('.players-opt').forEach(btn => {
 	});
 });
 
-function saveAuth(token, username) {
+// acid-arcade-db profile picture next to an account name (empty for guests and standalone mode)
+function avatarHtml(userId) {
+	if (!window.ARCADE_PUBLIC_URL || userId === null || userId === undefined) return '';
+	return `<img class="avatar" src="${window.ARCADE_PUBLIC_URL}/avatar/${encodeURIComponent(userId)}" alt="">`;
+}
+
+function saveAuth(token, username, userId) {
 	state.authToken = token;
 	state.authUsername = username;
+	if (userId !== undefined) state.authUserId = userId;
 	localStorage.setItem('scrabble_auth_token', token);
 	localStorage.setItem('scrabble_auth_username', username);
 	refreshAuthStatus();
@@ -2079,6 +2089,7 @@ function saveAuth(token, username) {
 function clearAuth() {
 	state.authToken = null;
 	state.authUsername = null;
+	state.authUserId = null;
 	localStorage.removeItem('scrabble_auth_token');
 	localStorage.removeItem('scrabble_auth_username');
 	refreshAuthStatus();
@@ -2089,13 +2100,18 @@ function refreshAuthStatus() {
 	const showAuth = document.getElementById('btn-show-auth');
 	const showProf = document.getElementById('btn-show-profile');
 	const logoutBtn = document.getElementById('btn-logout');
+	const accountLink = document.getElementById('link-account-settings');
 	const nameInput = document.getElementById('landing-name-input');
 	if (!txt) return;
 	if (state.authUsername) {
-		txt.textContent = `Signed in as ${state.authUsername}`;
+		txt.innerHTML = `Signed in as ${avatarHtml(state.authUserId)}${escapeHtml(state.authUsername)}`;
 		showAuth.classList.add('hidden');
 		showProf.classList.remove('hidden');
 		logoutBtn.classList.remove('hidden');
+		if (window.ARCADE_PUBLIC_URL) {
+			accountLink.href = `${window.ARCADE_PUBLIC_URL}/account`;
+			accountLink.classList.remove('hidden');
+		}
 		if (nameInput) {
 			nameInput.value = state.authUsername.toUpperCase().slice(0, 9);
 			nameInput.disabled = true;
@@ -2113,6 +2129,7 @@ function refreshAuthStatus() {
 		showAuth.classList.remove('hidden');
 		showProf.classList.add('hidden');
 		logoutBtn.classList.add('hidden');
+		accountLink.classList.add('hidden');
 		if (nameInput) {
 			nameInput.value = guest;
 			nameInput.disabled = false;
@@ -2189,7 +2206,7 @@ function refreshAuthStatus() {
 				if (mode === 'signup') loadCaptcha();
 				return;
 			}
-			saveAuth(d.auth_token, d.username);
+			saveAuth(d.auth_token, d.username, d.user_id);
 			overlay.classList.add('hidden');
 			usernameInput.value = ''; passwordInput.value = '';
 			syncActiveRoomsFromAccount();
@@ -2227,7 +2244,7 @@ function refreshAuthStatus() {
 			const d = await r.json();
 			if (!r.ok) { profContent.textContent = d.error || 'Failed'; }
 			else {
-				profUsername.textContent = d.username;
+				profUsername.innerHTML = avatarHtml(d.user_id) + escapeHtml(d.username);
 				const wl = d.wins, ls = d.losses, dr = d.draws, gp = d.games_played;
 				const avg = d.total_plays > 0 ? Math.round(d.total_play_score / d.total_plays) : 0;
 				const hi = d.highest_play_words.join(', ');
@@ -2262,19 +2279,38 @@ function refreshAuthStatus() {
 	});
 	profClose.addEventListener('click', () => profOverlay.classList.add('hidden'));
 
+	// Signed in on another acid-arcade site of this domain? Swap the shared cookie for a session here (once per page load)
+	let ssoTried = false;
+	async function trySso() {
+		if (!window.ARCADE_PUBLIC_URL || ssoTried) return false;
+		ssoTried = true;
+		try {
+			const r = await fetch('/auth/sso');
+			if (!r.ok) return false;
+			const d = await r.json();
+			saveAuth(d.auth_token, d.username, d.user_id);
+			syncActiveRoomsFromAccount();
+			return true;
+		} catch (e) {
+			return false;
+		}
+	}
+
 	// Verify session at startup
 	if (state.authToken) {
 		fetch('/auth/me', { headers: { 'X-Auth-Token': state.authToken } })
 			.then(r => r.json())
-			.then(d => {
+			.then(async d => {
 				if (d.user) {
-					saveAuth(state.authToken, d.user.username);
+					saveAuth(state.authToken, d.user.username, d.user.user_id);
 					syncActiveRoomsFromAccount();
-				} else clearAuth();
+				} else if (!window.ARCADE_PUBLIC_URL) clearAuth();
+				else if (d.user === null && !(await trySso())) clearAuth();
 			})
 			.catch(() => {});
 	} else {
 		refreshAuthStatus();
+		trySso();
 	}
 })();
 
@@ -2465,7 +2501,7 @@ function renderChat() {
 	}
 	const html = state.chat.map(m => {
 		const cls = m.slot === state.mySlot ? 'mine' : 'theirs';
-		const safeName = escapeHtml(m.name);
+		const safeName = avatarHtml(m.spectator ? null : state.userIds[m.slot]) + escapeHtml(m.name);
 		const safeText = escapeHtml(m.text);
 		return `<div class="chat-msg ${cls}"><span class="chat-name">${safeName}:</span>${safeText}</div>`;
 	}).join('');
@@ -2560,7 +2596,7 @@ function showEndGame() {
 	const reasonText = reasonMap[f.reason] || f.reason;
 	const rowList = f.scores.map((sc, i) => {
 		const cls = f.winner === null ? '' : (f.winner === i ? 'win' : 'lose');
-		return `<div class="endgame-row"><span class="lbl">${escapeHtml(f.names[i] || 'P' + (i + 1))}</span><span class="val ${cls}">${sc}</span></div>`;
+		return `<div class="endgame-row"><span class="lbl">${avatarHtml(state.userIds[i])}${escapeHtml(f.names[i] || 'P' + (i + 1))}</span><span class="val ${cls}">${sc}</span></div>`;
 	});
 	rowList.push(`<div class="endgame-row"><span class="lbl">Moves</span><span class="val">${(f.moves || []).reduce((a, b) => a + b, 0)}</span></div>`);
 	if (f.challenge_mode && Array.isArray(f.bluffs)) {
@@ -2643,7 +2679,7 @@ function renderModeColumn(data) {
 		const p = data.top_play;
 		html += section('Top scoring play', `
 			<div class="lb-row"><span class="lb-word">${p.words.join(', ')}</span><span class="lb-score">+${p.score}</span></div>
-			<div class="lb-row"><span class="lb-player">${p.player}</span><span class="lb-meta">${fmtDate(p.at)}</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(p.user_id)}${p.player}</span><span class="lb-meta">${fmtDate(p.at)}</span></div>
 		`);
 	} else {
 		html += section('Top scoring play', '<div class="lb-empty">No plays yet</div>');
@@ -2651,8 +2687,8 @@ function renderModeColumn(data) {
 	if (data.top_game) {
 		const g = data.top_game;
 		html += section('Highest scoring game', `
-			<div class="lb-row"><span class="lb-player">${g.player}</span><span class="lb-score">${g.score}</span></div>
-			<div class="lb-row"><span class="lb-meta">vs ${g.opponent} (${g.opponent_score})</span><span class="lb-meta">${fmtDate(g.at)}</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(g.user_id)}${g.player}</span><span class="lb-score">${g.score}</span></div>
+			<div class="lb-row"><span class="lb-meta">vs ${avatarHtml(g.opponent_user_id)}${g.opponent} (${g.opponent_score})</span><span class="lb-meta">${fmtDate(g.at)}</span></div>
 		`);
 	} else {
 		html += section('Highest scoring game', '<div class="lb-empty">No games finished yet</div>');
@@ -2661,7 +2697,7 @@ function renderModeColumn(data) {
 		const l = data.longest_word;
 		html += section('Longest word played', `
 			<div class="lb-row"><span class="lb-word">${l.word}</span><span class="lb-meta">${l.word.length} letters</span></div>
-			<div class="lb-row"><span class="lb-player">${l.player}</span><span class="lb-meta">${fmtDate(l.at)}</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(l.user_id)}${l.player}</span><span class="lb-meta">${fmtDate(l.at)}</span></div>
 		`);
 	} else {
 		html += section('Longest word played', '<div class="lb-empty">No words yet</div>');

@@ -5,12 +5,27 @@
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 	<meta name="apple-mobile-web-app-capable" content="yes">
 	<meta name="mobile-web-app-capable" content="yes">
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 	<meta name="theme-color" content="#08080f">
-	<title>Scrabble</title>
+	<title>Scrabble - multiplayer word game online</title>
+	<meta name="description" content="Play Scrabble online for free with 2 to 4 players. Create a room and share the code, play the computer, or watch a game. NWL2023 word list with definitions. Open source, no install.">
+	{% if room %}<meta name="robots" content="noindex">{% else %}<link rel="canonical" href="{{ url }}">{% endif %}
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Scrabble">
+	<meta property="og:title" content="Scrabble">
+	<meta property="og:description" content="Multiplayer Scrabble in the browser: 2-4 players, rooms, AI opponents and spectators.">
+	<meta property="og:url" content="{{ url }}">
+	<meta property="og:image" content="{{ url }}static/og.png">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+	<meta property="og:image:alt" content="Scrabble tiles spelling SCRABBLE">
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="Scrabble">
+	<meta name="twitter:description" content="Multiplayer Scrabble in the browser: 2-4 players, rooms, AI opponents and spectators.">
+	<meta name="twitter:image" content="{{ url }}static/og.png">
 	<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v={{ cache_v }}">
 	<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v={{ cache_v }}">
 	<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}?v={{ cache_v }}">
@@ -19,6 +34,7 @@
 </head>
 <body>
 	<div id="app">
+		<h1 class="sr-only">Scrabble</h1>
 		<header class="topbar">
 			<div class="game-mode-info" id="game-mode-info"></div>
 			<div id="no-moves-banner" class="no-moves-banner hidden"></div>
@@ -78,6 +94,7 @@
 				<span id="auth-status-text">Playing as guest</span>
 				<button class="auth-link" id="btn-show-auth">Sign in</button>
 				<button class="auth-link hidden" id="btn-show-profile">My stats</button>
+				<a class="auth-link hidden" id="link-account-settings" target="_blank" rel="noopener">Account settings</a>
 				<button class="auth-link hidden" id="btn-logout">Log out</button>
 			</div>
 			<input type="text" id="landing-name-input" maxlength="9" autocomplete="off" spellcheck="false" placeholder="PLAYER">
@@ -312,6 +329,7 @@
 		</div>
 	</div>
 
+	<script>window.ARCADE_PUBLIC_URL = {{ arcade_public_url|tojson }};</script>
 	<script src="{{ url_for('static', filename='script.js') }}?v={{ cache_v }}"></script>
 </body>
 </html>

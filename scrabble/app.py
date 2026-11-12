@@ -10,17 +10,20 @@ import secrets
 import sqlite3
 import threading
 import time
-from flask import Flask, Response, render_template, request, jsonify
+from flask import Flask, Response, render_template, request, jsonify, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 
+import arcade
 import move_gen
-from auth import USERNAME_RE, captcha_create, captcha_verify, create_session, get_request_user_id, get_username
+from auth import USERNAME_RE, arcade_sync_loop, captcha_create, captcha_verify, create_session, get_request_user_id, get_username
 from game import AI_TOKEN, MAX_PLAYERS_CAP, MIN_PLAYERS, SPECTATOR_SLOT, SPEED_MAX_TURNS, SPEED_TURN_SECONDS, advance_turn, after_action_speed, ai_take_turn, apply_play, bag_counts, check_placement, check_speed_timeout, clean_name, clean_placements, end_turn, filled_slots, finalize_game, get_ai_slot, new_game, new_room, placement_words, player_has_moves, rack_value, record_history, set_last_action, touch_room, unseen_counts, highest_active_other
 from storage import DB_LOCK, HINT_TOKEN_CAP, WINS_PER_TOKEN, backup_loop, db_connect, delete_room_persisted, get_hint_tokens, init_db, load_rooms, meta_get, prune_sessions, run_daily_backup, save_room
 from words import DICTIONARY, WORD_TRIE, check_dictionary, fetch_definition
 
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1 if arcade.enabled() else 0, x_proto=1) # https links in the page metadata behind nginx, and in arcade mode the player's IP for acid-arcade-db rate limits
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 
@@ -77,6 +80,51 @@ try:
 except Exception as e:
 	print(f'initial backup failed: {e}')
 threading.Thread(target=backup_loop, daemon=True).start()
+if arcade.enabled():
+	threading.Thread(target=arcade_sync_loop, daemon=True).start()
+
+
+@app.errorhandler(arcade.ArcadeDown)
+def arcade_down(e):
+	'''Fail hard when acid-arcade-db is unreachable instead of treating the player as a guest.'''
+
+	return jsonify({'error': 'account server is down'}), 503
+
+
+@app.errorhandler(arcade.ArcadeError)
+def arcade_error(e):
+	'''Pass acid-arcade-db refusals (bad login, taken name, wrong captcha) through to the player.'''
+
+	return jsonify({'error': str(e)}), e.status
+
+
+def arcade_public_url() -> str:
+	'''Return the acid-arcade-db site on this request's domain for the frontend, or an empty string in standalone mode.'''
+
+	return arcade.public_url(request.host) if arcade.enabled() else ''
+
+
+def arcade_session_reply(d: dict):
+	'''Answer an acid-arcade-db sign-in like a local login, and share it with the other sites on this domain.'''
+
+	resp = jsonify({'auth_token': d['token'], 'username': d['username'], 'user_id': d['user_id']})
+	arcade.set_cookie(resp, request.host, d['token'])
+	return resp
+
+
+def current_names(record: dict) -> dict:
+	'''In arcade mode, show the current username of the accounts in a leaderboard record (renames) and drop ids of deleted accounts.'''
+
+	if record and arcade.enabled():
+		for name_key, id_key in (('player', 'user_id'), ('opponent', 'opponent_user_id')):
+			if record.get(id_key) is None:
+				continue
+			name = get_username(record[id_key])
+			if name:
+				record[name_key] = name
+			else:
+				record[id_key] = None
+	return record
 
 
 SUBSCRIBERS = {}
@@ -205,14 +253,35 @@ def maybe_run_ai(room):
 
 @app.route('/')
 def index():
-	return render_template('index.html', cache_v=CACHE_VERSION)
+	return render_template('index.html', cache_v=CACHE_VERSION, url=request.url_root, room=False, arcade_public_url=arcade_public_url())
 
 
 @app.route('/<rid>')
 def index_with_room(rid):
 	if len(rid) != ROOM_ID_LEN or not all(c in ROOM_ID_CHARS for c in rid.lower()):
 		return 'Not found', 404
-	return render_template('index.html', cache_v=CACHE_VERSION)
+	return render_template('index.html', cache_v=CACHE_VERSION, url=request.url_root, room=True, arcade_public_url=arcade_public_url())
+
+
+@app.route('/favicon.ico')
+def favicon():
+	"""Serve the PNG icon for clients that only look for /favicon.ico."""
+
+	return send_from_directory(app.static_folder, 'icon-192.png', mimetype='image/png')
+
+
+@app.route('/robots.txt')
+def robots():
+	"""Let crawlers in and point them at the sitemap."""
+
+	return Response(f'User-agent: *\nAllow: /\nSitemap: {request.url_root}sitemap.xml\n', mimetype='text/plain')
+
+
+@app.route('/sitemap.xml')
+def sitemap():
+	"""List the home page, the only page worth indexing."""
+
+	return Response(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{request.url_root}</loc></url></urlset>\n', mimetype='application/xml')
 
 
 @app.route('/room_exists/<rid>')
@@ -249,6 +318,7 @@ def create_room():
 	if len(rooms) >= MAX_ROOMS:
 		return jsonify({'error': f'Server full (max {MAX_ROOMS} concurrent rooms). Try again later.'}), 503
 	data = request.get_json(silent=True) or {}
+	user_id = get_request_user_id()
 	name = clean_name(data.get('name')) or 'P1'
 	mode = data.get('mode')
 	if mode not in ('classic', 'random'):
@@ -277,7 +347,6 @@ def create_room():
 	rooms[rid]['_rid'] = rid
 	token = secrets.token_urlsafe(16)
 	rooms[rid]['players'][token] = 0
-	user_id = get_request_user_id()
 	if user_id is not None:
 		uname = get_username(user_id)
 		if uname:
@@ -470,6 +539,7 @@ def state():
 		'max_players': game.get('max_players', 2),
 		'player_count': len(filled_slots(room)),
 		'names': room['names'],
+		'user_ids': user_ids,
 		'colors': room['colors'],
 		'chat': room['chat'],
 		'chat_seq': room['chat_seq'],
@@ -970,6 +1040,8 @@ def post_chat():
 
 @app.route('/auth/captcha', methods=['GET'])
 def auth_captcha():
+	if arcade.enabled():
+		return jsonify(arcade.captcha())
 	return jsonify(captcha_create())
 
 
@@ -980,6 +1052,8 @@ def auth_signup():
 	password = data.get('password') or ''
 	captcha_id = data.get('captcha_id')
 	captcha_answer = data.get('captcha_answer')
+	if arcade.enabled():
+		return arcade_session_reply(arcade.signup(username, password, captcha_id, captcha_answer, request.remote_addr))
 	if not USERNAME_RE.match(username):
 		return jsonify({'error': 'Username must be 3-16 letters/digits/underscores'}), 400
 	if len(password) < 6 or len(password) > 128:
@@ -1009,6 +1083,8 @@ def auth_login():
 	password = data.get('password') or ''
 	if not username or not password:
 		return jsonify({'error': 'Username and password required'}), 400
+	if arcade.enabled():
+		return arcade_session_reply(arcade.login(username, password, request.remote_addr))
 	with DB_LOCK:
 		with db_connect() as c:
 			row = c.execute('SELECT id, password_hash FROM users WHERE username=?', (username,)).fetchone()
@@ -1022,6 +1098,12 @@ def auth_login():
 def auth_logout():
 	data = request.get_json(silent=True) or {}
 	token = data.get('auth_token')
+	if arcade.enabled():
+		if token:
+			arcade.logout(token)
+		resp = jsonify({'ok': True})
+		arcade.clear_cookie(resp, request.host)
+		return resp
 	if token:
 		with DB_LOCK:
 			with db_connect() as c:
@@ -1036,7 +1118,24 @@ def auth_me():
 	if uid is None:
 		return jsonify({'user': None})
 	name = get_username(uid)
-	return jsonify({'user': {'username': name}})
+	resp = jsonify({'user': {'username': name, 'user_id': uid}})
+	if arcade.enabled() and not request.cookies.get(arcade.COOKIE):
+		arcade.set_cookie(resp, request.host, request.headers.get('X-Auth-Token'))
+	return resp
+
+
+@app.route('/auth/sso', methods=['GET'])
+def auth_sso():
+	'''Swap the shared sign-in cookie set by any acid-arcade site on this domain for a session here.'''
+
+	if not arcade.enabled():
+		return 'Not found', 404
+	d = arcade.sso(request.cookies.get(arcade.COOKIE))
+	if not d:
+		resp = jsonify({'error': 'not signed in'})
+		arcade.clear_cookie(resp, request.host)
+		return resp, 401
+	return arcade_session_reply(d)
 
 
 @app.route('/auth/stats', methods=['GET'])
@@ -1063,6 +1162,7 @@ def auth_stats():
 		except Exception: return d
 	return jsonify({
 		'username': uname,
+		'user_id': uid,
 		'games_played': gv('games_played'),
 		'wins': gv('wins'),
 		'losses': gv('losses'),
@@ -1112,9 +1212,9 @@ def leaderboard():
 	def mode_block(mode, rows):
 		return {
 			'total_games': meta_get(f'total_games_{mode}', 0) or 0,
-			'top_play': meta_get(f'top_play_{mode}'),
-			'top_game': meta_get(f'top_game_{mode}'),
-			'longest_word': meta_get(f'longest_word_{mode}'),
+			'top_play': current_names(meta_get(f'top_play_{mode}')),
+			'top_game': current_names(meta_get(f'top_game_{mode}')),
+			'longest_word': current_names(meta_get(f'longest_word_{mode}')),
 			'top_words': [{'word': r['word'], 'count': r['count']} for r in rows],
 		}
 	return jsonify({
