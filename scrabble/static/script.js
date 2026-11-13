@@ -2004,12 +2004,22 @@ function showLanding() {
 	landingOnlineTimer = setInterval(refreshOnlineCount, 5000);
 }
 
-function renderActiveRooms() {
+async function renderActiveRooms() {
 	const el = document.getElementById('active-rooms');
 	if (!el) return;
 	const map = loadRoomsMap();
 	const urlRid = getUrlRoomId();
-	const rids = Object.keys(map).filter(r => r !== urlRid);
+	// Finished rooms stay on the server for rematches, so ask which rooms are still in play: drop the ones that are gone, hide the ones that are over.
+	const live = await Promise.all(Object.keys(map).filter(r => r !== urlRid).map(async (r) => {
+		try {
+			const d = await (await fetch(`/room_exists/${encodeURIComponent(r)}`)).json();
+			if (!d.exists) { delRoomCred(r); return null; }
+			return d.game_over ? null : r;
+		} catch (e) {
+			return r;
+		}
+	}));
+	const rids = live.filter(Boolean);
 	if (rids.length === 0) {
 		el.classList.add('hidden');
 		el.innerHTML = '';
