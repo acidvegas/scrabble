@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import app as server
 import arcade
 import auth
+import game
 import storage
 
 
@@ -44,6 +45,18 @@ class TestApp(unittest.TestCase):
 		headers = {'X-Auth-Token': auth_token}
 		resp    = self.client.get(path, headers=headers) if body is None else self.client.post(path, json=body, headers=headers)
 		return resp.get_json(), resp.status_code
+
+
+	def test_bluffs_skip_records(self):
+		'''A challenge mode play with an invalid word scores in the game but is not sent to the records.'''
+
+		for word, counted in (('ZQX', False), ('CAT', True)):
+			room = game.new_room(challenge_mode=True)
+			room['game']['racks'][0] = list(word) + ['E'] * (7 - len(word))
+			with mock.patch.object(game, 'record_play_metrics') as metrics:
+				score, _ = game.apply_play(room, 0, [{'row': 7, 'col': 6 + i, 'letter': ch} for i, ch in enumerate(word)])
+			self.assertGreater(score, 0)
+			self.assertEqual(metrics.called, counted, word)
 
 
 	def test_seo_urls(self):
