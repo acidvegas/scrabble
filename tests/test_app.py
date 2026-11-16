@@ -259,10 +259,14 @@ class TestApp(unittest.TestCase):
 
 
 	def test_standalone_sends_nothing(self):
-		'''Standalone mode never sends events, stats or presence to acid-arcade-db.'''
+		'''Standalone mode never sends events, stats, presence or activity to acid-arcade-db.'''
 
 		with mock.patch.object(arcade, 'event') as event, mock.patch.object(arcade, 'push_stats') as push_stats, mock.patch.object(arcade, 'call') as call:
 			storage.record_play_metrics(['QUIXOTIC'], 'dave', 120, 'x', 'random', user_id=1)
+			room = game.new_room(vs_computer=True)
+			room.update({'_rid': 'abcd', 'user_ids': [1, None]})
+			room['game']['moves'] = [9, 9]
+			game.finalize_game(room, 'tiles_out')
 			storage.push_arcade_event(1, 'win', 'won a Scrabble game with 1 points')
 			storage.push_arcade_stats(1)
 			time.sleep(0.1)
@@ -296,13 +300,13 @@ class TestApp(unittest.TestCase):
 class TestArcade(unittest.TestCase):
 	'''acid-arcade-db mode with the arcade client functions mocked out.'''
 
-	USERS = {'tok-a': {'user_id': 1001, 'username': 'arcadeann', 'admin': False}, 'tok-b': {'user_id': 1002, 'username': 'arcadebob', 'admin': False}, 'tok-c': {'user_id': 1003, 'username': 'arcadecat', 'admin': False}, 'tok-d': {'user_id': 1004, 'username': 'arcadedan', 'admin': False}}
+	USERS = {'tok-a': {'user_id': 1001, 'username': 'arcadeann', 'admin': False}, 'tok-b': {'user_id': 1002, 'username': 'arcadebob', 'admin': False}, 'tok-c': {'user_id': 1003, 'username': 'arcadecat', 'admin': False}, 'tok-d': {'user_id': 1004, 'username': 'arcadedan', 'admin': False}, 'tok-e': {'user_id': 1005, 'username': 'arcadeeve', 'admin': False}}
 
 	def setUp(self):
 		'''Turn arcade mode on and fake its session lookup.'''
 
 		self.client  = server.app.test_client()
-		self.patches = [mock.patch.object(arcade, 'enabled', return_value=True), mock.patch.object(arcade, 'ARCADE_PUBLIC', 'https://arcade.{domain}'), mock.patch.object(arcade, 'session', side_effect=lambda t: self.USERS.get(t)), mock.patch.object(arcade, 'push_stats'), mock.patch.object(arcade, 'event')]
+		self.patches = [mock.patch.object(arcade, 'enabled', return_value=True), mock.patch.object(arcade, 'ARCADE_PUBLIC', 'https://arcade.{domain}'), mock.patch.object(arcade, 'session', side_effect=lambda t: self.USERS.get(t)), mock.patch.object(arcade, 'push_stats'), mock.patch.object(arcade, 'event'), mock.patch.object(arcade, 'activity', return_value={'granted': 0, 'reason': None, 'dup': False})]
 		for p in self.patches:
 			p.start()
 
@@ -327,6 +331,55 @@ class TestArcade(unittest.TestCase):
 
 		with storage.db_connect() as c:
 			return c.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+
+
+	def acts(self, count: int) -> list:
+		'''Wait for activity reports and return their (user_id, kind, ref, ip, data) arguments.'''
+
+		end = time.time() + 5
+		while arcade.activity.call_count < count and time.time() < end:
+			time.sleep(0.02)
+		time.sleep(0.05)
+		self.assertEqual(arcade.activity.call_count, count)
+		return [c[0] for c in arcade.activity.call_args_list]
+
+
+	def test_ai_game_activity(self):
+		'''A finished 1-on-1 game against the computer is reported with the player's turns and both scores, except abandoned games, guests, rooms with more seats and a forfeit by the computer.'''
+
+		def ended(reason: str, scores: list, user_id: int = 7001, seats: int = 2, forfeited: list = None, vs_computer: bool = True) -> dict:
+			room = game.new_room(max_players=seats, vs_computer=vs_computer, ai_difficulty=60)
+			room.update({'_rid': 'abcd', 'creator_ip': '203.0.113.9', 'user_ids': [user_id] + [None] * (seats - 1)})
+			room['game'].update({'scores': scores, 'moves': [9] + [8] * (seats - 1), 'forfeited_slots': forfeited or []})
+			game.finalize_game(room, reason)
+			return room
+
+		room = ended('tiles_out', [320, 280])
+		self.assertEqual(self.acts(1)[0], (7001, 'ai_game', f'abcd-{int(room["game"]["ended_at"] * 1000)}', '203.0.113.9', {'result': 'win', 'difficulty': 60, 'style': 'score', 'turns': 9, 'score': 320, 'ai_score': 280}))
+		ended('three_passes', [200, 280])
+		ended('no_moves', [250, 250])
+		ended('forfeit', [400, 100], forfeited=[0])
+		self.assertEqual([a[4]['result'] for a in self.acts(4)[1:]], ['loss', 'draw', 'loss'])
+		for reason, kwargs in (('timeout', {}), ('tiles_out', {'user_id': None}), ('tiles_out', {'seats': 4, 'scores': [400, 1, 1, 1]}), ('forfeit', {'forfeited': [1]}), ('tiles_out', {'vs_computer': False})):
+			ended(reason, kwargs.pop('scores', [400, 100]), **kwargs)
+		self.acts(4)
+
+
+	def test_ai_game_activity_room(self):
+		'''Through the routes: a signed in player who quits a started computer game reports a loss from their address, quitting before any turn reports nothing.'''
+
+		a, _ = self.call('/create_room', {'name': 'X', 'vs_computer': True, 'ai_style': 'stacker'}, 'tok-e')
+		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
+		a, _   = self.call('/create_room', {'name': 'X', 'vs_computer': True, 'ai_difficulty': 30}, 'tok-e')
+		room   = server.rooms[a['room_id']]
+		self.assertEqual(self.call('/pass', {'room_id': a['room_id'], 'player_token': a['player_token']})[1], 200)
+		room['game']['ai_play_after'] = 0
+		s, _ = self.call(f'/state?room_id={a["room_id"]}&player_token={a["player_token"]}')
+		self.assertEqual(s['current'], 0)
+		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
+		act = self.acts(1)[0]
+		self.assertEqual(act[:2] + act[3:], (1005, 'ai_game', '127.0.0.1', {'result': 'loss', 'difficulty': 30, 'style': 'score', 'turns': 1, 'score': 0, 'ai_score': room['game']['scores'][1]}))
+		self.assertTrue(act[2].startswith(a['room_id'] + '-'))
 
 
 	def test_auth_proxy(self):

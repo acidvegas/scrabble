@@ -94,6 +94,8 @@ Scrabble can optionally use [acid-arcade-db](https://github.com/acidvegas/acid-a
 
 In this mode login, signup and sessions go through acid-arcade-db, and the local `users` table only mirrors those accounts. Renames and account deletions are picked up every 60 seconds, and each player's wins and stats are sent to their arcade profile when a game ends. If acid-arcade-db is down, account requests answer `503`. Running `ARCADE_URL=http://acid-arcade-db:20021 ./setup.sh` joins the container to the `arcade` Docker network and passes these variables.
 
+A finished game between one signed in player and the computer *(2-seat rooms only)* is reported to acid-arcade-db as an `ai_game` *(result, difficulty, style, the player's turns and both scores)*, which pays casino chips for wins. Rooms with more seats are never reported, so other seats can't feed the player. Games abandoned for a day are not reported, a forfeit only ever reports the player's own loss, and challenge mode *(the only undo)* is off against the computer.
+
 ## Tests
 
 ```bash

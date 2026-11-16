@@ -319,6 +319,26 @@ def _record_user_game_end(user_id, result):
 			c.commit()
 
 
+def push_arcade_ai_game(room: dict, reason: str, user_ids: list):
+	'''Report a finished game between one signed in player and the computer to acid-arcade-db in a background thread, for casino chip rewards. Does nothing in standalone mode.
+
+	Only 2-seat rooms count, so no other seat can feed the player points. Games the reaper ended after a day idle are unfinished and not reported, and a forfeit counts only as the player's own loss.
+	'''
+
+	game = room['game']
+	if not arcade.enabled() or not game.get('vs_computer') or game.get('max_players', 2) != 2 or reason not in ('tiles_out', 'three_passes', 'no_moves', 'forfeit'):
+		return
+	ai_slot = game['ai_slot']
+	human   = 1 - ai_slot
+	if not user_ids[human] or (reason == 'forfeit' and human not in (game.get('forfeited_slots') or [])):
+		return
+	winner = (game.get('final_summary') or {}).get('winner')
+	result = 'draw' if game.get('game_result') == 'draw' or winner is None else 'win' if winner == human else 'loss'
+	data   = {'result': result, 'difficulty': game['ai_difficulty'], 'style': game['ai_style'], 'turns': game['moves'][human], 'score': game['scores'][human], 'ai_score': game['scores'][ai_slot]}
+	ref    = f'{room.get("_rid")}-{int(game["ended_at"] * 1000)}' # a rematch plays on in the same room
+	threading.Thread(target=send_arcade_activity, args=(user_ids[human], 'ai_game', ref, room.get('creator_ip') or '', data), daemon=True).start()
+
+
 def push_arcade_event(user_id: int, kind: str, text: str):
 	'''Add a line to the acid-arcade-db activity feed in a background thread. Does nothing in standalone mode.'''
 
@@ -353,6 +373,7 @@ def record_game_end(room, reason):
 	seated = set(room['players'].values()) | set(game.get('forfeited_slots', []) or [])
 	if any(game['moves'][slot] < 1 for slot in seated if slot < max_players):
 		return # someone left before taking a turn: not a real game, so no wins or losses (stops instant forfeit farming)
+	push_arcade_ai_game(room, reason, user_ids)
 	has_registered = any(uid for uid in user_ids[:max_players])
 	if has_registered:
 		meta_increment(f'total_games_{mode}')
@@ -391,6 +412,15 @@ def record_game_end(room, reason):
 				'reason': reason,
 				'at': int(time.time()),
 			})
+
+
+def send_arcade_activity(user_id: int, kind: str, ref: str, ip: str, data: dict):
+	'''Report a player's activity to acid-arcade-db for arcade rewards, printing instead of raising on failure.'''
+
+	try:
+		arcade.activity(user_id, kind, ref, ip, data)
+	except Exception as e:
+		print(f'arcade activity({user_id}, {kind}) failed: {e}')
 
 
 def send_arcade_event(user_id: int, kind: str, text: str):
