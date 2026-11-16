@@ -216,7 +216,7 @@ class TestApp(unittest.TestCase):
 		self.assertEqual(status, 200)
 		self.call('/auth/logout', {'auth_token': data['auth_token']})
 		self.assertIsNone(self.call('/auth/me', auth_token=data['auth_token'])[0]['user'])
-		self.assertIn('ARCADE_PUBLIC_URL = "";', self.client.get('/').get_data(as_text=True))
+		self.assertIn('data-arcade-public-url=""', self.client.get('/').get_data(as_text=True))
 
 
 	def test_standalone_captcha_limits(self):
@@ -349,7 +349,7 @@ class TestArcade(unittest.TestCase):
 			self.assertEqual(self.call('/auth/me', auth_token='tok-a'), ({'error': 'account server is down'}, 503))
 			self.assertEqual(self.call('/create_room', {'name': 'X'}, 'tok-a')[1], 503)
 		self.assertIsNone(self.call('/auth/me', auth_token='bogus')[0]['user'])
-		self.assertIn('ARCADE_PUBLIC_URL = "https://arcade.localhost"', self.client.get('/').get_data(as_text=True))
+		self.assertIn('data-arcade-public-url="https://arcade.localhost"', self.client.get('/').get_data(as_text=True))
 
 
 	def test_state_hides_opponent_rack(self):
@@ -458,7 +458,7 @@ class TestArcade(unittest.TestCase):
 		with mock.patch.object(arcade, 'signup', side_effect=arcade.ArcadeError('too many new accounts, try again later', 429)):
 			self.assertEqual(self.call('/auth/signup', {'username': 'x', 'password': 'y', 'captcha_id': 'c1', 'captcha_answer': 'A'})[1], 429)
 		for host, url in (('scrabble.supernets.org', 'https://arcade.supernets.org'), ('scrabble.acid.vegas', 'https://arcade.acid.vegas')):
-			self.assertIn(f'ARCADE_PUBLIC_URL = "{url}"', self.client.get('/', base_url=f'https://{host}').get_data(as_text=True))
+			self.assertIn(f'data-arcade-public-url="{url}"', self.client.get('/', base_url=f'https://{host}').get_data(as_text=True))
 
 
 	def test_presence(self):
