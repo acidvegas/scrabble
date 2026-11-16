@@ -26,6 +26,7 @@ from words import DICTIONARY, WORD_TRIE, check_dictionary, fetch_definition
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1 if arcade.enabled() else 0, x_proto=1) # https links in the page metadata behind nginx, and in arcade mode the player's IP for acid-arcade-db rate limits
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 # no request needs more than a few KB
 app.jinja_env.auto_reload = True
 
 CACHE_VERSION = int(time.time())
@@ -39,6 +40,8 @@ CHAT_MAX = 100
 CHAT_TEXT_MAX = 100
 CHAT_RATE_WINDOW = 1.0
 CHAT_RATE_MAX = 2
+MAX_SPECTATORS = 50 # watchers kept per room, the oldest is dropped past this
+MAX_SPECTATORS_PER_IP = 10 # watchers one IP keeps per room, its oldest is dropped past this
 
 
 def reap_old_rooms():
@@ -507,17 +510,21 @@ def share_pending():
 	data = request.get_json(silent=True) or {}
 	raw = data.get('placements') or []
 	clean = []
-	for p in raw:
+	seen = set()
+	for p in raw if isinstance(raw, list) else []:
+		if len(clean) >= 7: # a rack never holds more than 7 tiles
+			break
 		try:
 			r = int(p.get('row'))
 			c = int(p.get('col'))
-		except (TypeError, ValueError):
+		except (AttributeError, TypeError, ValueError):
 			continue
-		if not (0 <= r < 15 and 0 <= c < 15):
+		if not (0 <= r < 15 and 0 <= c < 15) or (r, c) in seen:
 			continue
 		letter = (p.get('letter') or '').upper()[:1]
 		if not letter or not letter.isalpha():
 			continue
+		seen.add((r, c))
 		clean.append({'row': r, 'col': c, 'letter': letter, 'blank': bool(p.get('blank'))})
 	game.setdefault('pending_views', {})
 	key = str(slot)
@@ -539,9 +546,16 @@ def watch_room():
 		return jsonify({'error': 'Room not found'}), 404
 	room = rooms[rid]
 	room.setdefault('spectators', {})
+	ips = room.setdefault('spectator_ips', {})
+	ip = request.remote_addr
+	mine = [t for t in room['spectators'] if ips.get(t) == ip]
+	for old in mine[:max(0, len(mine) - MAX_SPECTATORS_PER_IP + 1)] + list(room['spectators'])[:max(0, len(room['spectators']) - MAX_SPECTATORS + 1)]:
+		room['spectators'].pop(old, None) # tokens are minted freely, so the oldest watchers make room instead of the list growing forever
+		ips.pop(old, None)
 	name = raw_name or 'Watcher'
 	token = secrets.token_urlsafe(16)
 	room['spectators'][token] = name
+	ips[token] = ip
 	touch_room(room)
 	save_room(room.get('_rid'), room)
 	notify_room(room.get('_rid'))
@@ -1012,6 +1026,7 @@ def forfeit():
 		token = (request.get_json(silent=True) or {}).get('player_token') or ''
 		if token in room.get('spectators', {}):
 			del room['spectators'][token]
+			room.get('spectator_ips', {}).pop(token, None)
 			save_room(rid, room)
 			notify_room(rid)
 		return jsonify({'ok': True})
@@ -1090,11 +1105,17 @@ def post_chat():
 			limits.append([])
 		times = limits[slot]
 	cutoff = now - CHAT_RATE_WINDOW
+	ip_limits = room.setdefault('chat_ip_limits', {}) # per IP too, since new spectator tokens are free
+	for key in [k for k, v in ip_limits.items() if not v or v[-1] <= cutoff]:
+		del ip_limits[key]
+	ip_times = ip_limits.setdefault(request.remote_addr, [])
 	times[:] = [t for t in times if t > cutoff]
-	if len(times) >= CHAT_RATE_MAX:
-		retry = round((times[0] + CHAT_RATE_WINDOW) - now, 2)
+	ip_times[:] = [t for t in ip_times if t > cutoff]
+	if len(times) >= CHAT_RATE_MAX or len(ip_times) >= CHAT_RATE_MAX:
+		retry = round((min(times[:1] + ip_times[:1]) + CHAT_RATE_WINDOW) - now, 2)
 		return jsonify({'error': f'Slow down — wait {retry}s', 'retry_after': retry}), 429
 	times.append(now)
+	ip_times.append(now)
 
 	if is_spectator:
 		token = (request.get_json(silent=True) or {}).get('player_token') or ''

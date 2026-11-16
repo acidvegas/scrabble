@@ -65,6 +65,26 @@ class TestApp(unittest.TestCase):
 			self.assertTrue(move_gen.has_any_move(*args))
 
 
+	def test_spectator_chat_and_pending_caps(self):
+		'''Watchers per room and per IP are capped, chat is limited per IP across tokens, and pending tiles are capped at 7 squares.'''
+
+		a, _ = self.call('/create_room', {'name': 'X', 'transparent_mode': True})
+		rid  = a['room_id']
+		self.call('/join_room', {'room_id': rid, 'name': 'Y'})
+		flood = [self.client.post('/watch_room', json={'room_id': rid}, environ_base={'REMOTE_ADDR': '10.5.0.1'}).get_json()['player_token'] for _ in range(15)]
+		for i in range(60):
+			self.client.post('/watch_room', json={'room_id': rid}, environ_base={'REMOTE_ADDR': f'10.6.0.{i}'})
+		room = server.rooms[rid]
+		self.assertEqual(len(room['spectators']), server.MAX_SPECTATORS)
+		self.assertNotIn(flood[0], room['spectators'])
+		tokens = [self.client.post('/watch_room', json={'room_id': rid}, environ_base={'REMOTE_ADDR': '10.5.0.2'}).get_json()['player_token'] for _ in range(3)]
+		codes  = [self.client.post('/chat', json={'room_id': rid, 'player_token': t, 'text': 'hi'}, environ_base={'REMOTE_ADDR': '10.5.0.2'}).status_code for t in tokens]
+		self.assertEqual(codes, [200, 200, 429])
+		self.assertEqual(self.call('/share_pending', {'room_id': rid, 'player_token': a['player_token'], 'placements': [{'row': 7, 'col': c % 15, 'letter': 'A'} for c in range(50)] + ['junk']})[1], 200)
+		self.assertEqual(len(room['game']['pending_views']['0']), 7)
+		self.assertEqual(self.client.post('/chat', data='x' * 70_000, content_type='application/json').status_code, 413)
+
+
 	def test_bluffs_skip_records(self):
 		'''A challenge mode play with an invalid word scores in the game but is not sent to the records.'''
 
