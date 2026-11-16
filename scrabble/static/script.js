@@ -348,6 +348,33 @@ const lastBox = document.getElementById('last-box');
 const lastSummary = document.getElementById('last-summary');
 const defOverlay = document.getElementById('def-overlay');
 const defList = document.getElementById('def-list');
+const srLive = document.getElementById('sr-live');
+
+function announce(text) {
+	if (!srLive || !text) return;
+	srLive.textContent = '';
+	setTimeout(() => { srLive.textContent = text; }, 50);
+}
+
+const COL_NAMES = 'ABCDEFGHIJKLMNO';
+const BONUS_NAMES = { TW: 'triple word', DW: 'double word', TL: 'triple letter', DL: 'double letter', ST: 'center star', XX: 'blocked' };
+
+function cellLabel(r, c, cell, pending, oppPending) {
+	const parts = [`${COL_NAMES[c]}${r + 1}`];
+	const tile = pending || oppPending;
+	const placed = state.board[r][c];
+	if (tile) {
+		parts.push(`${tile.blank ? 'blank as ' : 'letter '}${tile.letter}`);
+		parts.push(oppPending ? `${state.names[oppPending.owner] || `P${oppPending.owner + 1}`} pending` : 'your pending tile');
+	} else if (placed) {
+		parts.push(`${state.blanks[r][c] ? 'blank as ' : 'letter '}${placed}`);
+	}
+	const bonus = state.bonus[r] ? state.bonus[r][c] : '';
+	if (BONUS_NAMES[bonus]) parts.push(BONUS_NAMES[bonus]);
+	if (cell.classList.contains('last-play')) parts.push('last play');
+	if (cell.classList.contains('hint-cell')) parts.push('hint');
+	return parts.join(', ');
+}
 
 function pickBubbleCorner(cellsList, isOccupied) {
 	if (!cellsList || cellsList.length === 0) return null;
@@ -396,6 +423,7 @@ function buildBoard() {
 			cell.className = 'cell';
 			cell.dataset.r = r;
 			cell.dataset.c = c;
+			cell.setAttribute('role', 'img');
 			cell.addEventListener('pointerdown', onCellPointerDown);
 			boardEl.appendChild(cell);
 		}
@@ -505,6 +533,13 @@ function renderBoard() {
 				const up = cells[(r - 1) * 15 + c];
 				if (up && up.classList.contains('has-tile')) cell.classList.add('connect-up');
 			}
+		}
+	}
+
+	for (let r = 0; r < 15; r++) {
+		for (let c = 0; c < 15; c++) {
+			const key = `${r},${c}`;
+			cells[r * 15 + c].setAttribute('aria-label', cellLabel(r, c, cells[r * 15 + c], pendingMap[key], oppPendingMap[key]));
 		}
 	}
 
@@ -686,6 +721,7 @@ function renderRack() {
 		if (usedIds.has(item.id)) {
 			const placeholder = document.createElement('div');
 			placeholder.className = 'rack-tile rack-placeholder';
+			placeholder.setAttribute('aria-hidden', 'true');
 			rackEl.appendChild(placeholder);
 			return;
 		}
@@ -697,6 +733,8 @@ function renderRack() {
 		const display = item.letter === '_' ? '?' : item.letter;
 		tile.innerHTML = `${display}<span class="tile-value">${item.letter === '_' ? '0' : (LETTER_VALUES[item.letter] || 0)}</span>`;
 		tile.dataset.id = item.id;
+		tile.setAttribute('role', 'img');
+		tile.setAttribute('aria-label', (item.letter === '_' ? 'blank' : `${item.letter}, ${LETTER_VALUES[item.letter] || 0} point${LETTER_VALUES[item.letter] === 1 ? '' : 's'}`) + (tile.classList.contains('swap-mark') ? ', selected for swap' : ''));
 		tile.addEventListener('pointerdown', e => onRackPointerDown(e, item.id));
 		rackEl.appendChild(tile);
 	});
@@ -732,6 +770,7 @@ function getPoint(e) {
 function createGhost(letter, isBlank) {
 	const g = document.createElement('div');
 	g.className = 'drag-ghost' + (isBlank ? ' blank-tile' : '');
+	g.setAttribute('aria-hidden', 'true');
 	const display = letter === '_' ? '?' : letter;
 	const value = letter === '_' || isBlank ? '0' : (LETTER_VALUES[letter] || 0);
 	g.innerHTML = `${display}<span class="tile-value">${value}</span>`;
@@ -1247,6 +1286,7 @@ document.getElementById('btn-blank-cancel').addEventListener('click', () => {
 function showMessage(text, kind) {
 	messageBar.textContent = text;
 	messageBar.className = kind || '';
+	announce(text);
 }
 
 function clearMessage() {
@@ -1355,6 +1395,12 @@ async function loadState(preservePending) {
 	const newSig = `${state.lastPlayer}|${state.lastAction}|${(state.lastWords||[]).join(',')}`;
 	const opponentActed = newSig !== prevSig && state.lastPlayer !== null && state.lastPlayer !== state.mySlot;
 	const joined = prevRoom === state.roomId ? state.names.filter((n, i) => i !== state.mySlot && n && !prevNames[i]) : [];
+	const spoken = [];
+	if (joined.length) spoken.push(`${joined.join(', ')} joined`);
+	if (newSig !== prevSig) spoken.push(describeLastAction());
+	if (!state.gameOver && state.isFull && (newSig !== prevSig || state.current !== prevCurrent)) {
+		spoken.push(state.current === state.mySlot ? 'Your turn' : `${state.names[state.current] || `P${state.current + 1}`}'s turn`);
+	}
 	if (joined.length) {
 		fireNotification('Scrabble', `${joined.join(', ')} joined the room`);
 	} else if (opponentActed) {
@@ -1380,6 +1426,7 @@ async function loadState(preservePending) {
 	if (newestChat && newestChat.id > state.lastNotifiedChatId && newestChat.slot !== state.mySlot) {
 		soundChatPing();
 		fireNotification(`${newestChat.name}`, newestChat.text);
+		spoken.push(`${newestChat.name} says: ${newestChat.text}`);
 		state.lastNotifiedChatId = newestChat.id;
 	}
 	if (newestChat && newestChat.id > state.lastSeenChatId && newestChat.slot !== state.mySlot) {
@@ -1398,6 +1445,8 @@ async function loadState(preservePending) {
 		state.endgameShown = true;
 		showEndGame();
 		soundEndGame();
+		const winnerEl = endgameBody.querySelector('.endgame-winner');
+		spoken.push(endgameTitle.textContent, winnerEl ? winnerEl.textContent : '');
 	}
 	if (!state.gameOver && endgameOverlay && !endgameOverlay.classList.contains('hidden')) {
 		endgameOverlay.classList.add('hidden');
@@ -1406,6 +1455,7 @@ async function loadState(preservePending) {
 	if (state.gameOver && endgameOverlay && !endgameOverlay.classList.contains('hidden')) {
 		updateRematchStatus();
 	}
+	announce(spoken.filter(Boolean).join('. '));
 	return true;
 }
 
@@ -2219,6 +2269,7 @@ function refreshAuthStatus() {
 			const d = await r.json();
 			if (!r.ok) {
 				errEl.textContent = d.error || 'Failed';
+				announce(errEl.textContent);
 				if (mode === 'signup') loadCaptcha();
 				return;
 			}
@@ -2407,6 +2458,7 @@ document.getElementById('btn-create-room').addEventListener('click', async () =>
 	const data = await r.json();
 	if (!r.ok) {
 		landingError.textContent = data.error || 'Could not create room';
+		announce(landingError.textContent);
 		return;
 	}
 	saveCreds(data.room_id, data.player_token);
@@ -2427,6 +2479,7 @@ async function joinByRoomId(rid, name) {
 	const data = await r.json();
 	if (!r.ok) {
 		landingError.textContent = `${data.error || 'Could not join'} (${rid}) — tap Create Room to start a new game`;
+		announce(landingError.textContent);
 		return false;
 	}
 	saveCreds(data.room_id, data.player_token);
@@ -2446,6 +2499,7 @@ async function watchByRoomId(rid, name) {
 	const data = await r.json();
 	if (!r.ok) {
 		landingError.textContent = `${data.error || 'Could not watch'} (${rid})`;
+		announce(landingError.textContent);
 		return false;
 	}
 	saveCreds(data.room_id, data.player_token);
@@ -2792,6 +2846,7 @@ document.getElementById('btn-join-confirm').addEventListener('click', async () =
 			return;
 		}
 		joinError.textContent = data.error || 'Could not join room';
+		announce(joinError.textContent);
 		return;
 	}
 	saveCreds(data.room_id, data.player_token);
@@ -2835,6 +2890,7 @@ document.getElementById('btn-name-save').addEventListener('click', async () => {
 	const data = await r.json();
 	if (!r.ok) {
 		nameError.textContent = data.error || 'Could not save';
+		announce(nameError.textContent);
 		return;
 	}
 	saveName(name);

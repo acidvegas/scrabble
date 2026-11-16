@@ -40,6 +40,7 @@
 <body>
 	<div id="app">
 		<h1 class="sr-only">Scrabble</h1>
+		<div id="sr-live" class="sr-only" aria-live="polite"></div>
 		<header class="topbar">
 			<div class="game-mode-info" id="game-mode-info"></div>
 			<div id="no-moves-banner" class="no-moves-banner hidden"></div>
@@ -59,7 +60,7 @@
 		</header>
 
 		<main class="board-wrap">
-			<div id="board"></div>
+			<div id="board" role="group" aria-label="Board"></div>
 		</main>
 
 		<div id="info-panel">
@@ -75,7 +76,7 @@
 		<div id="message-bar"></div>
 
 		<footer class="rack-wrap">
-			<div id="rack"></div>
+			<div id="rack" role="group" aria-label="Your rack"></div>
 			<div class="actions">
 				<button class="btn btn-submit" id="btn-submit" title="Submit" aria-label="Submit">
 					<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>
@@ -102,7 +103,7 @@
 				<a class="auth-link hidden" id="link-account-settings" target="_blank" rel="noopener">Account settings</a>
 				<button class="auth-link hidden" id="btn-logout">Log out</button>
 			</div>
-			<input type="text" id="landing-name-input" maxlength="9" autocomplete="off" spellcheck="false" placeholder="PLAYER">
+			<input type="text" id="landing-name-input" aria-label="Your name" maxlength="9" autocomplete="off" spellcheck="false" placeholder="PLAYER">
 			<div class="mode-picker">
 				<span class="mode-label">Mode</span>
 				<div class="mode-options">
@@ -134,14 +135,14 @@
 				<div class="players-picker" id="players-picker">
 					<span class="mode-label">Players</span>
 					<div class="players-options">
-						<button class="players-opt selected" data-players="2">2</button>
-						<button class="players-opt" data-players="3">3</button>
-						<button class="players-opt" data-players="4">4</button>
+						<button class="players-opt selected" data-players="2" aria-label="2 players">2</button>
+						<button class="players-opt" data-players="3" aria-label="3 players">3</button>
+						<button class="players-opt" data-players="4" aria-label="4 players">4</button>
 					</div>
 				</div>
 				<div class="difficulty-picker hidden" id="difficulty-picker">
 					<span class="mode-label">Difficulty <span id="difficulty-value">50</span></span>
-					<input type="range" id="difficulty-slider" min="1" max="100" value="50">
+					<input type="range" id="difficulty-slider" aria-label="AI difficulty" min="1" max="100" value="50">
 				</div>
 				<label class="speed-toggle hidden" id="stacker-toggle-wrap">
 					<input type="checkbox" id="stacker-checkbox">
@@ -182,10 +183,10 @@
 				</div>
 			</div>
 			<div id="auth-captcha-row" class="auth-field hidden">
-				<label class="auth-label">Type the characters below</label>
+				<label class="auth-label" for="auth-captcha-answer">Type the characters below</label>
 				<div class="captcha-wrap">
 					<div id="auth-captcha-image" class="captcha-image"></div>
-					<button type="button" id="auth-captcha-refresh" class="captcha-refresh" title="New captcha">↻</button>
+					<button type="button" id="auth-captcha-refresh" class="captcha-refresh" title="New captcha" aria-label="New captcha">↻</button>
 				</div>
 				<input type="text" id="auth-captcha-answer" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter the characters">
 			</div>
@@ -209,7 +210,7 @@
 		<div class="overlay-box">
 			<h2>Join Room</h2>
 			<p>Enter the 4-character room code from your friend.</p>
-			<input type="text" id="join-room-input" maxlength="4" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcd">
+			<input type="text" id="join-room-input" aria-label="Room code" maxlength="4" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcd">
 			<div id="join-error" class="join-error"></div>
 			<div class="landing-buttons">
 				<button class="btn btn-ready" id="btn-join-confirm">Join</button>
@@ -222,7 +223,7 @@
 		<div class="overlay-box">
 			<h2>Change Name</h2>
 			<p>Letters only, up to 9 characters.</p>
-			<input type="text" id="name-input" maxlength="9" autocomplete="off" spellcheck="false">
+			<input type="text" id="name-input" aria-label="New name" maxlength="9" autocomplete="off" spellcheck="false">
 			<div id="name-error" class="join-error"></div>
 			<div class="landing-buttons">
 				<button class="btn btn-ready" id="btn-name-save">Save</button>
@@ -288,7 +289,7 @@
 			<h2>Chat</h2>
 			<div id="chat-messages" class="chat-messages"></div>
 			<div class="chat-input-row">
-				<input type="text" id="chat-input" maxlength="100" placeholder="Say something (max 100 chars)">
+				<input type="text" id="chat-input" aria-label="Chat message" maxlength="100" placeholder="Say something (max 100 chars)">
 				<button class="btn btn-ready chat-send-btn" id="btn-chat-send">Send</button>
 			</div>
 		</div>
