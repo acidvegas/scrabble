@@ -259,13 +259,6 @@ def new_game(mode='classic', speed=False, max_players=2, challenge_mode=False, t
 	}
 
 
-def bag_counts(bag):
-	counts = {}
-	for letter in bag:
-		counts[letter] = counts.get(letter, 0) + 1
-	return counts
-
-
 def unseen_counts(game, my_slot):
 	counts = {}
 	for letter in game['bag']:

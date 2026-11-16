@@ -171,6 +171,16 @@ class TestArcade(unittest.TestCase):
 		self.assertIn('ARCADE_PUBLIC_URL = "https://arcade.localhost"', self.client.get('/').get_data(as_text=True))
 
 
+	def test_state_hides_opponent_rack(self):
+		'''A player's /state never carries the bag on its own, which would reveal the opponent's rack next to the unseen tiles.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'})
+		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'})
+		s, _ = self.call(f'/state?room_id={a["room_id"]}&player_token={a["player_token"]}')
+		self.assertNotIn('bag_letters', s)
+		self.assertEqual(sum(s['unseen_letters'].values()), s['bag_count'] + 7)
+
+
 	def test_game_end_push_and_sync(self):
 		'''Mirror rows appear on first use, game end pushes stats, and renames and deletes are applied.'''
 
