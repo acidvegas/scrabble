@@ -5,7 +5,7 @@
 set -e
 set --
 if [ -n "$ARCADE_URL" ]; then
-	set -- --network arcade -e ARCADE_URL -e ARCADE_PUBLIC_URL=${ARCADE_PUBLIC_URL:-https://arcade.\{domain\}} -e ARCADE_GAME=scrabble
+	set -- --network arcade -e ARCADE_URL -e ARCADE_PUBLIC_URL=${ARCADE_PUBLIC_URL:-https://arcade.\{domain\}} -e ARCADE_GAME=scrabble -e ARCADE_KEY
 fi
 if [ -n "$SCRABBLE_PUBLIC_URL" ]; then
 	set -- "$@" -e SCRABBLE_PUBLIC_URL
