@@ -335,7 +335,6 @@
 		</div>
 	</div>
 
-	<script>window.ARCADE_PUBLIC_URL = {{ arcade_public_url|tojson }};</script>
-	<script src="{{ url_for('static', filename='script.js') }}?v={{ cache_v }}"></script>
+	<script src="{{ url_for('static', filename='script.js') }}?v={{ cache_v }}" data-arcade-public-url="{{ arcade_public_url }}"></script>
 </body>
 </html>
