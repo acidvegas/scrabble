@@ -975,6 +975,7 @@ def rematch():
 		if speed:
 			room['game']['turn_deadline'] = time.time() + SPEED_TURN_SECONDS
 		room['rematch'] = [False] * max_players
+		room.pop('quit_user_ids', None)
 	touch_room(room)
 	save_room(room.get('_rid'), room)
 	notify_room(room.get('_rid'))
@@ -1012,9 +1013,11 @@ def forfeit():
 		game.setdefault('forfeited_slots', [])
 		if slot not in game['forfeited_slots']:
 			game['forfeited_slots'].append(slot)
-		# Drop user_id binding for this slot
+		# Drop user_id binding for this slot, remembering it so the game end still records their loss
 		user_ids = room.get('user_ids') or []
 		if slot < len(user_ids):
+			if user_ids[slot]:
+				room.setdefault('quit_user_ids', {})[str(slot)] = user_ids[slot]
 			user_ids[slot] = None
 			room['user_ids'] = user_ids
 		# If it was their turn, advance to next active player

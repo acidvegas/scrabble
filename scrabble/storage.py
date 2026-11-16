@@ -346,7 +346,13 @@ def record_game_end(room, reason):
 	if mode not in ('classic', 'random'):
 		mode = 'classic'
 	max_players = game.get('max_players', 2)
-	user_ids = room.get('user_ids', [None] * max_players)
+	user_ids = list(room.get('user_ids', [None] * max_players))
+	for slot, uid in (room.get('quit_user_ids') or {}).items():
+		if int(slot) < len(user_ids):
+			user_ids[int(slot)] = uid # players who forfeited still get their loss
+	seated = set(room['players'].values()) | set(game.get('forfeited_slots', []) or [])
+	if any(game['moves'][slot] < 1 for slot in seated if slot < max_players):
+		return # someone left before taking a turn: not a real game, so no wins or losses (stops instant forfeit farming)
 	has_registered = any(uid for uid in user_ids[:max_players])
 	if has_registered:
 		meta_increment(f'total_games_{mode}')
