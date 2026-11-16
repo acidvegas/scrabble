@@ -78,7 +78,7 @@ All data is written to the directory in `SCRABBLE_DATA_DIR`. It defaults to `dat
 | `rooms.sqlite` | Active rooms, so games survive a restart              |
 | `backups/`     | Daily copies of both databases, kept for 7 days       |
 
-Rooms with no activity for 24 hours are removed. The server holds at most 100 rooms at a time.
+Rooms with no activity for 24 hours are removed. The server holds at most 100 rooms at a time. One IP address can have at most 5 unfinished rooms and 20 open event streams at once.
 
 ## acid-arcade-db
 
