@@ -115,7 +115,7 @@ class TestApp(unittest.TestCase):
 class TestArcade(unittest.TestCase):
 	'''acid-arcade-db mode with the arcade client functions mocked out.'''
 
-	USERS = {'tok-a': {'user_id': 1001, 'username': 'arcadeann', 'admin': False}, 'tok-b': {'user_id': 1002, 'username': 'arcadebob', 'admin': False}}
+	USERS = {'tok-a': {'user_id': 1001, 'username': 'arcadeann', 'admin': False}, 'tok-b': {'user_id': 1002, 'username': 'arcadebob', 'admin': False}, 'tok-c': {'user_id': 1003, 'username': 'arcadecat', 'admin': False}, 'tok-d': {'user_id': 1004, 'username': 'arcadedan', 'admin': False}}
 
 	def setUp(self):
 		'''Turn arcade mode on and fake its session lookup.'''
@@ -181,6 +181,44 @@ class TestArcade(unittest.TestCase):
 		self.assertEqual(sum(s['unseen_letters'].values()), s['bag_count'] + 7)
 
 
+	def pushed(self, user_id: int) -> tuple:
+		'''Wait for a stats push for a user and return its (user_id, main, stats) arguments.'''
+
+		end = time.time() + 5
+		while time.time() < end:
+			calls = [c[0] for c in arcade.push_stats.call_args_list if c[0][0] == user_id]
+			if calls:
+				return calls[-1]
+			time.sleep(0.02)
+		self.fail(f'no stats push for {user_id}')
+
+
+	def take_turns(self, *players: dict):
+		'''Have every player pass once, in turn order.'''
+
+		slots = {self.call(f'/state?room_id={p["room_id"]}&player_token={p["player_token"]}')[0]['my_slot']: p for p in players}
+		for _ in players:
+			s, _ = self.call(f'/state?room_id={players[0]["room_id"]}&player_token={players[0]["player_token"]}')
+			current = slots[s['current']]
+			self.assertEqual(self.call('/pass', {'room_id': current['room_id'], 'player_token': current['player_token']})[1], 200)
+
+
+	def test_forfeit_results(self):
+		'''Forfeiting before everyone took a turn records nothing, and after that the player who quits gets the loss.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'}, 'tok-c')
+		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'}, 'tok-d')
+		self.call('/forfeit', {'room_id': b['room_id'], 'player_token': b['player_token']})
+		time.sleep(0.2)
+		arcade.push_stats.assert_not_called()
+		a, _ = self.call('/create_room', {'name': 'X'}, 'tok-c')
+		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'}, 'tok-d')
+		self.take_turns(a, b)
+		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
+		self.assertEqual((self.pushed(1003)[2]['Wins'], self.pushed(1003)[2]['Losses']), (0, 1))
+		self.assertEqual((self.pushed(1004)[2]['Wins'], self.pushed(1004)[2]['Losses']), (1, 0))
+
+
 	def test_game_end_push_and_sync(self):
 		'''Mirror rows appear on first use, game end pushes stats, and renames and deletes are applied.'''
 
@@ -191,12 +229,10 @@ class TestArcade(unittest.TestCase):
 		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'}, 'tok-b')
 		s, _ = self.call(f'/state?room_id={a["room_id"]}&player_token={b["player_token"]}')
 		self.assertEqual((s['user_ids'], s['names']), ([1001, 1002], ['arcadeann', 'arcadebob']))
+		self.take_turns(a, b)
 		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
-		end = time.time() + 5
-		while not arcade.push_stats.called and time.time() < end:
-			time.sleep(0.02)
-		user_id, main, stats = arcade.push_stats.call_args[0]
-		self.assertEqual((user_id, main, stats['Games'], stats['Wins'], stats['Losses']), (1002, 1, 1, 1, 0))
+		pushed = self.pushed(1002)
+		self.assertEqual((pushed[1], pushed[2]['Games'], pushed[2]['Wins'], pushed[2]['Losses']), (1, 1, 1, 0))
 		wait_called(arcade.event)
 		arcade.event.assert_called_once_with(1002, 'win', 'won a Scrabble game with 0 points')
 		storage.meta_set('top_play_classic', {'words': ['QI'], 'player': 'arcadebob', 'user_id': 1002, 'score': 11, 'room_id': 'x', 'at': 0})
