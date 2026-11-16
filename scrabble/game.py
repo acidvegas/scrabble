@@ -473,7 +473,8 @@ def apply_play(room, slot, placements):
 	record_history(room, slot, 'play', words=word_list, score=score)
 	user_ids = room.get('user_ids') or []
 	try:
-		record_play_metrics([w for w in word_list if check_dictionary(w)], room['names'][slot] or f'P{slot + 1}', score, room.get('_rid'), game.get('mode', 'classic'), user_id=user_ids[slot] if slot < len(user_ids) else None)
+		if all(check_dictionary(w) for w in word_list): # an unchallenged bluff scores in the game but never counts toward records or stats
+			record_play_metrics(word_list, room['names'][slot] or f'P{slot + 1}', score, room.get('_rid'), game.get('mode', 'classic'), user_id=user_ids[slot] if slot < len(user_ids) else None)
 	except Exception:
 		pass
 	end_turn(room, slot)
