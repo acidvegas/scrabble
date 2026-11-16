@@ -1308,7 +1308,6 @@ async function loadState(preservePending) {
 	state.maxTurns = s.max_turns || 5;
 	state.missedTurns = s.missed_turns || [0, 0];
 	state.rematch = s.rematch || [false, false];
-	state.bagLetters = s.bag_letters || {};
 	state.unseenLetters = s.unseen_letters || {};
 	state.tileOwners = s.tile_owners || [];
 	state.colors = s.colors || ['#ffe49f', '#ffe49f', '#ffe49f', '#ffe49f'];
@@ -2854,9 +2853,7 @@ const bagTotal = document.getElementById('bag-total');
 const ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 function openBagInspector() {
-	const counts = state.unseenLetters && Object.keys(state.unseenLetters).length
-		? state.unseenLetters
-		: (state.bagLetters || {});
+	const counts = state.unseenLetters || {};
 	const items = [];
 	for (const letter of ALPHA) {
 		const n = counts[letter] || 0;
