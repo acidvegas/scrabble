@@ -703,6 +703,8 @@ body {
 	font-size: 0;
 }
 
+.btn.hidden { display: none; } /* buttons the script hides (Decline, Hint with no tokens) */
+
 .btn svg {
 	width: 24px;
 	height: 24px;
