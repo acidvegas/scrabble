@@ -3,6 +3,7 @@
 
 """Scrabble move generator (trie + anchor search)."""
 
+import time
 from typing import Iterable
 
 LETTER_VALUES = {
@@ -12,6 +13,16 @@ LETTER_VALUES = {
 }
 
 ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+SEARCH_SECONDS = 1.0 # longest a full move search runs (horizontal gets the first half); it keeps the moves found so far
+
+
+class _OutOfTime(Exception):
+	"""Raised inside the search once its time is up."""
+
+
+class _Results(list):
+	"""Moves found so far, and when the search has to stop."""
+	deadline = float('inf')
 
 
 class TrieNode:
@@ -300,6 +311,8 @@ def _left_part(start_r, start_c, anchor_r, anchor_c, node, rack, placements, lim
 			   step_dr, step_dc, back_dr, back_dc):
 	if only_check_exists and results:
 		return
+	if time.monotonic() > results.deadline:
+		raise _OutOfTime
 	_extend_right(anchor_r, anchor_c, anchor_r, anchor_c, node, rack, placements,
 				  board, bonus_board, blanks_board, trie, dictionary_set,
 				  horizontal, cross, results, only_check_exists, step_dr, step_dc)
@@ -351,6 +364,8 @@ def _extend_right(anchor_r, anchor_c, cur_r, cur_c, node, rack, placements,
 				  horizontal, cross, results, only_check_exists, step_dr, step_dc):
 	if only_check_exists and results:
 		return
+	if time.monotonic() > results.deadline:
+		raise _OutOfTime
 	on_board = 0 <= cur_r < 15 and 0 <= cur_c < 15
 	if not on_board or not board[cur_r][cur_c]:
 		# Record if word ends here
@@ -439,17 +454,30 @@ def generate_moves(board, rack, bonus_board, blanks_board, trie, dictionary_set,
 
 	Returns a list of dicts with keys: placements, score, words, horizontal.
 	If only_check_exists=True, returns as soon as one move is found.
+	A full search stops after SEARCH_SECONDS (racks with two blanks can take several seconds) and returns what it found;
+	only_check_exists has no time limit, since it ends at the first move and a wrong "no moves" could end the game.
 	"""
-	results = []
+	results = _Results()
+	start = time.monotonic()
 	# Horizontal
-	_gen_for_direction(board, list(rack), bonus_board, blanks_board, trie, dictionary_set,
-					   first_move, True, results, only_check_exists)
+	if not only_check_exists:
+		results.deadline = start + SEARCH_SECONDS / 2
+	try:
+		_gen_for_direction(board, list(rack), bonus_board, blanks_board, trie, dictionary_set,
+						   first_move, True, results, only_check_exists)
+	except _OutOfTime:
+		pass
 	if only_check_exists and results:
-		return results
+		return list(results)
 	# Vertical (same anchors logic but with stepping down)
-	_gen_for_direction(board, list(rack), bonus_board, blanks_board, trie, dictionary_set,
-					   first_move, False, results, only_check_exists)
-	return results
+	if not only_check_exists:
+		results.deadline = start + SEARCH_SECONDS
+	try:
+		_gen_for_direction(board, list(rack), bonus_board, blanks_board, trie, dictionary_set,
+						   first_move, False, results, only_check_exists)
+	except _OutOfTime:
+		pass
+	return list(results)
 
 
 def has_any_move(board, rack, bonus_board, blanks_board, trie, dictionary_set, first_move=False):
