@@ -30,6 +30,7 @@ def init_db():
 		c.execute('DROP TABLE IF EXISTS definitions')
 		c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)')
 		c.execute('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id))')
+		c.execute('CREATE TABLE IF NOT EXISTS word_counts_v2 (word TEXT NOT NULL, mode TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (word, mode))')
 		c.execute('CREATE TABLE IF NOT EXISTS user_word_counts (user_id INTEGER NOT NULL, word TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, word))')
 		c.execute('''CREATE TABLE IF NOT EXISTS user_stats (
 			user_id INTEGER PRIMARY KEY,
@@ -209,7 +210,6 @@ def record_play_metrics(words, player_name, score, room_id, mode='classic', user
 		return
 	with DB_LOCK:
 		with db_connect() as c:
-			c.execute('CREATE TABLE IF NOT EXISTS word_counts_v2 (word TEXT NOT NULL, mode TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (word, mode))')
 			for w in words:
 				wu = w.upper()
 				c.execute('INSERT INTO word_counts_v2(word, mode, count) VALUES(?, ?, 1) ON CONFLICT(word, mode) DO UPDATE SET count = count + 1', (wu, mode))

@@ -1414,6 +1414,13 @@ function updateRematchStatus() {
 	const btn = document.getElementById('btn-rematch');
 	const declineBtn = document.getElementById('btn-rematch-decline');
 	if (!status || !btn) return;
+	const closed = (state.forfeitedSlots || []).length > 0; // the forfeiter can never accept, so a rematch can't happen
+	btn.style.display = closed ? 'none' : ''; // .btn sets display: flex, so the hidden class has no effect here
+	if (closed) {
+		status.textContent = '';
+		if (declineBtn) declineBtn.classList.add('hidden');
+		return;
+	}
 	const rematch = state.rematch || [];
 	const me = !!rematch[state.mySlot];
 	const forfeited = new Set(state.forfeitedSlots || []);
@@ -2688,7 +2695,7 @@ function renderModeColumn(data) {
 		const p = data.top_play;
 		html += section('Top scoring play', `
 			<div class="lb-row"><span class="lb-word">${p.words.join(', ')}</span><span class="lb-score">+${p.score}</span></div>
-			<div class="lb-row"><span class="lb-player">${avatarHtml(p.user_id)}${p.player}</span><span class="lb-meta">${fmtDate(p.at)}</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(p.user_id)}${escapeHtml(p.player)}</span><span class="lb-meta">${fmtDate(p.at)}</span></div>
 		`);
 	} else {
 		html += section('Top scoring play', '<div class="lb-empty">No plays yet</div>');
@@ -2696,8 +2703,8 @@ function renderModeColumn(data) {
 	if (data.top_game) {
 		const g = data.top_game;
 		html += section('Highest scoring game', `
-			<div class="lb-row"><span class="lb-player">${avatarHtml(g.user_id)}${g.player}</span><span class="lb-score">${g.score}</span></div>
-			<div class="lb-row"><span class="lb-meta">vs ${avatarHtml(g.opponent_user_id)}${g.opponent} (${g.opponent_score})</span><span class="lb-meta">${fmtDate(g.at)}</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(g.user_id)}${escapeHtml(g.player)}</span><span class="lb-score">${g.score}</span></div>
+			<div class="lb-row"><span class="lb-meta">vs ${avatarHtml(g.opponent_user_id)}${escapeHtml(g.opponent)} (${g.opponent_score})</span><span class="lb-meta">${fmtDate(g.at)}</span></div>
 		`);
 	} else {
 		html += section('Highest scoring game', '<div class="lb-empty">No games finished yet</div>');
@@ -2705,8 +2712,8 @@ function renderModeColumn(data) {
 	if (data.longest_word) {
 		const l = data.longest_word;
 		html += section('Longest word played', `
-			<div class="lb-row"><span class="lb-word">${l.word}</span><span class="lb-meta">${l.word.length} letters</span></div>
-			<div class="lb-row"><span class="lb-player">${avatarHtml(l.user_id)}${l.player}</span><span class="lb-meta">${fmtDate(l.at)}</span></div>
+			<div class="lb-row"><span class="lb-word">${escapeHtml(l.word)}</span><span class="lb-meta">${l.word.length} letters</span></div>
+			<div class="lb-row"><span class="lb-player">${avatarHtml(l.user_id)}${escapeHtml(l.player)}</span><span class="lb-meta">${fmtDate(l.at)}</span></div>
 		`);
 	} else {
 		html += section('Longest word played', '<div class="lb-empty">No words yet</div>');
