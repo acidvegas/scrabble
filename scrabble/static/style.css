@@ -39,6 +39,11 @@ body {
 
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible { outline: 2px solid #4dd17a; outline-offset: 2px; }
+
 #app {
 	display: flex;
 	flex-direction: column;
