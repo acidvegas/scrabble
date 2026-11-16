@@ -29,6 +29,8 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 1337
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD wget -qO- http://127.0.0.1:1337/healthz || exit 1
+
 USER app
 
 # Start gunicorn with a single gevent worker (room state lives in process memory)
