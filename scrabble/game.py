@@ -255,7 +255,6 @@ def new_game(mode='classic', speed=False, max_players=2, challenge_mode=False, t
 		'ai_style': ai_style if ai_style in ('score', 'stacker') else 'score',
 		'ai_play_after': 0,
 		'ai_slot': (max_players - 1) if vs_computer else None,
-		'no_moves_slot': None,
 	}
 
 

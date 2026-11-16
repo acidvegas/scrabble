@@ -25,9 +25,7 @@ from words import DICTIONARY, WORD_TRIE, check_dictionary, fetch_definition
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1 if arcade.enabled() else 0, x_proto=1) # https links in the page metadata behind nginx, and in arcade mode the player's IP for acid-arcade-db rate limits
-app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 # no request needs more than a few KB
-app.jinja_env.auto_reload = True
 
 CACHE_VERSION = int(time.time())
 PUBLIC_URL = os.environ.get('SCRABBLE_PUBLIC_URL', '').rstrip('/') # canonical site for crawlers and share cards, e.g. https://scrabble.acid.vegas (unset: the request host)
@@ -864,6 +862,8 @@ def swap():
 		return jsonify({'error': 'Cannot swap: fewer than 7 tiles left in bag'}), 400
 	data = request.get_json(silent=True) or {}
 	tiles = data.get('tiles', [])
+	if not isinstance(tiles, list) or len(tiles) > 7 or not all(isinstance(t, str) for t in tiles):
+		return jsonify({'error': 'Invalid tiles'}), 400
 	if not tiles:
 		return jsonify({'error': 'Select tiles to swap'}), 400
 	if len(game['bag']) < len(tiles):
@@ -973,6 +973,8 @@ def rematch():
 		return jsonify({'error': 'spectator'}), 403
 	if not game['game_over']:
 		return jsonify({'error': 'Game still in progress'}), 400
+	if game.get('forfeited_slots'):
+		return jsonify({'error': 'Rematch unavailable, a player forfeited'}), 400
 	max_players = room.get('max_players', 2)
 	data = request.get_json(silent=True) or {}
 	decline = bool(data.get('decline'))
@@ -1030,6 +1032,12 @@ def forfeit():
 			save_room(rid, room)
 			notify_room(rid)
 		return jsonify({'ok': True})
+	if game and not game['game_over'] and not (filled_slots(room) - {slot, get_ai_slot(game)}) and not any(game['moves']):
+		# Nobody else ever sat down and nothing was played, so the room never started: drop it and record nothing
+		rooms.pop(rid, None)
+		delete_room_persisted(rid)
+		notify_room(rid)
+		return jsonify({'ok': True})
 	if game and not game['game_over']:
 		forfeited = set(game.get('forfeited_slots', []) or [])
 		max_players = game.get('max_players', 2)
@@ -1071,7 +1079,7 @@ def forfeit():
 		token = next((t for t, s in room['players'].items() if s == slot), None)
 		if token:
 			del room['players'][token]
-		if not room['players']:
+		if not [t for t in room['players'] if t != AI_TOKEN]: # the computer's seat never leaves, so it does not keep the room alive
 			rooms.pop(rid, None)
 			delete_room_persisted(rid)
 		else:
@@ -1314,7 +1322,6 @@ def leaderboard():
 	except ValueError:
 		limit = 10
 	with db_connect() as c:
-		c.execute('CREATE TABLE IF NOT EXISTS word_counts_v2 (word TEXT NOT NULL, mode TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (word, mode))')
 		rows_classic = c.execute('SELECT word, count FROM word_counts_v2 WHERE mode=? ORDER BY count DESC, word ASC LIMIT ?', ('classic', limit)).fetchall()
 		rows_random = c.execute('SELECT word, count FROM word_counts_v2 WHERE mode=? ORDER BY count DESC, word ASC LIMIT ?', ('random', limit)).fetchall()
 	def mode_block(mode, rows):

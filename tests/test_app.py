@@ -5,6 +5,8 @@
 import json
 import os
 import re
+import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -22,6 +24,13 @@ import game
 import move_gen
 import storage
 import words
+
+
+def tearDownModule():
+	'''Remove the throwaway data directory.'''
+
+	server.rooms.clear() # nothing left for the exit hook to save into the removed directory
+	shutil.rmtree(os.environ['SCRABBLE_DATA_DIR'], ignore_errors=True)
 
 
 def wait_called(fn: mock.Mock, timeout: float = 5):
@@ -110,6 +119,62 @@ class TestApp(unittest.TestCase):
 		self.assertEqual(self.client.post('/join_room', json={'room_id': made[0].get_json()['room_id'], 'name': 'Y'}, environ_base=ip).status_code, 200)
 		server.rooms[made[0].get_json()['room_id']]['game']['game_over'] = True
 		self.assertEqual(self.client.post('/create_room', json={'name': 'X'}, environ_base=ip).status_code, 200)
+
+
+	def persisted(self, rid: str) -> bool:
+		'''Return whether a room is still saved in rooms.sqlite.'''
+
+		with sqlite3.connect(storage.ROOMS_DB_PATH) as c:
+			return c.execute('SELECT 1 FROM rooms WHERE id=?', (rid,)).fetchone() is not None
+
+
+	def test_leave_unstarted_room(self):
+		'''Leaving a room nobody else joined and nobody played in deletes it and records nothing, for a lobby and a computer game alike.'''
+
+		for body in ({'name': 'X'}, {'name': 'X', 'vs_computer': True}):
+			a, _ = self.call('/create_room', body)
+			with mock.patch.object(game, 'record_game_end') as record:
+				self.assertEqual(self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']}), ({'ok': True}, 200))
+			record.assert_not_called()
+			self.assertNotIn(a['room_id'], server.rooms)
+			self.assertFalse(self.persisted(a['room_id']))
+		a, _ = self.call('/create_room', {'name': 'X'})
+		self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'})
+		self.call('/forfeit', {'room_id': a['room_id'], 'player_token': a['player_token']})
+		self.assertTrue(server.rooms[a['room_id']]['game']['game_over'])
+
+
+	def test_leave_finished_computer_room(self):
+		'''Leaving a finished game against the computer deletes the room, since the computer's seat does not count as a player.'''
+
+		a, _ = self.call('/create_room', {'name': 'X', 'vs_computer': True})
+		rid  = a['room_id']
+		game.finalize_game(server.rooms[rid], 'no_moves')
+		self.call('/forfeit', {'room_id': rid, 'player_token': a['player_token']})
+		self.assertNotIn(rid, server.rooms)
+		self.assertFalse(self.persisted(rid))
+
+
+	def test_rematch_after_forfeit(self):
+		'''Once anyone forfeits, /rematch is refused and the state shows the forfeit so the page hides the button.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'})
+		b, _ = self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'})
+		self.call('/forfeit', {'room_id': b['room_id'], 'player_token': b['player_token']})
+		self.assertEqual(self.call('/rematch', {'room_id': a['room_id'], 'player_token': a['player_token']}), ({'error': 'Rematch unavailable, a player forfeited'}, 400))
+		s, _ = self.call(f'/state?room_id={a["room_id"]}&player_token={a["player_token"]}')
+		self.assertEqual((s['game_over'], s['forfeited_slots'], s['rematch']), (True, [1], [False, False]))
+
+
+	def test_swap_validation(self):
+		'''/swap refuses tiles that are not a list of at most 7 strings with a 400 instead of failing.'''
+
+		a, _ = self.call('/create_room', {'name': 'X'})
+		self.call('/join_room', {'room_id': a['room_id'], 'name': 'Y'})
+		for tiles in (5, 'AB', {'A': 1}, [1], ['A'] * 8):
+			self.assertEqual(self.call('/swap', {'room_id': a['room_id'], 'player_token': a['player_token'], 'tiles': tiles}), ({'error': 'Invalid tiles'}, 400), tiles)
+		rack = server.rooms[a['room_id']]['game']['racks'][0]
+		self.assertEqual(self.call('/swap', {'room_id': a['room_id'], 'player_token': a['player_token'], 'tiles': rack[:2]}), ({'ok': True}, 200))
 
 
 	def test_seo_urls(self):

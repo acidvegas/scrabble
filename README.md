@@ -83,7 +83,7 @@ Rooms with no activity for 24 hours are removed. The server holds at most 100 ro
 
 ## acid-arcade-db
 
-Scrabble can optionally use [acid-arcade-db](../acid-arcade-db) for accounts, so one username and password works on every acid-arcade game. Without `ARCADE_URL` it keeps its own accounts and needs nothing else.
+Scrabble can optionally use [acid-arcade-db](https://github.com/acidvegas/acid-arcade-db) for accounts, so one username and password works on every acid-arcade game. Without `ARCADE_URL` it keeps its own accounts and needs nothing else.
 
 | Variable            | Purpose                                                                               |
 |---------------------|---------------------------------------------------------------------------------------|
@@ -93,6 +93,14 @@ Scrabble can optionally use [acid-arcade-db](../acid-arcade-db) for accounts, so
 | `ARCADE_KEY`        | This game's key, needed when acid-arcade-db has `ARCADE_GAME_KEYS` set                |
 
 In this mode login, signup and sessions go through acid-arcade-db, and the local `users` table only mirrors those accounts. Renames and account deletions are picked up every 60 seconds, and each player's wins and stats are sent to their arcade profile when a game ends. If acid-arcade-db is down, account requests answer `503`. Running `ARCADE_URL=http://acid-arcade-db:20021 ./setup.sh` joins the container to the `arcade` Docker network and passes these variables.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+Run it from the repo root. The tests use a throwaway data directory that is removed when they finish.
 
 ---
 
