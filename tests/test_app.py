@@ -59,6 +59,20 @@ class TestApp(unittest.TestCase):
 			self.assertEqual(metrics.called, counted, word)
 
 
+	def test_room_limit_per_ip(self):
+		'''One IP may have 5 open rooms, a 6th is refused, another IP still works, and a finished room frees a spot.'''
+
+		ip    = {'REMOTE_ADDR': '198.51.100.1'}
+		made  = [self.client.post('/create_room', json={'name': 'X'}, environ_base=ip) for _ in range(5)]
+		self.assertTrue(all(r.status_code == 200 for r in made))
+		resp  = self.client.post('/create_room', json={'name': 'X'}, environ_base=ip)
+		self.assertEqual((resp.status_code, resp.get_json()), (429, {'error': 'you already have 5 open rooms, finish or leave one first'}))
+		self.assertEqual(self.client.post('/create_room', json={'name': 'X'}, environ_base={'REMOTE_ADDR': '198.51.100.2'}).status_code, 200)
+		self.assertEqual(self.client.post('/join_room', json={'room_id': made[0].get_json()['room_id'], 'name': 'Y'}, environ_base=ip).status_code, 200)
+		server.rooms[made[0].get_json()['room_id']]['game']['game_over'] = True
+		self.assertEqual(self.client.post('/create_room', json={'name': 'X'}, environ_base=ip).status_code, 200)
+
+
 	def test_seo_urls(self):
 		'''Canonical, og:url, JSON-LD, robots and sitemap use SCRABBLE_PUBLIC_URL when set and the request host when not.'''
 
@@ -123,6 +137,29 @@ class TestApp(unittest.TestCase):
 			time.sleep(0.1)
 			self.assertFalse(event.called or push_stats.called or call.called)
 		self.assertFalse(any(getattr(t, '_target', None) is server.presence_loop for t in threading.enumerate()))
+
+
+	def test_stream_limit_per_ip(self):
+		'''One IP may hold 20 event streams, the 21st is refused, and closing a stream frees its slot.'''
+
+		ip      = {'REMOTE_ADDR': '198.51.100.3'}
+		a       = self.client.post('/create_room', json={'name': 'X'}, environ_base={'REMOTE_ADDR': '198.51.100.4'}).get_json()
+		url     = f'/events?room_id={a["room_id"]}&player_token={a["player_token"]}'
+		streams = [self.client.get(url, buffered=False, environ_base=ip) for _ in range(20)]
+		self.assertTrue(all(r.status_code == 200 for r in streams))
+		self.assertEqual(self.client.get(url, buffered=False, environ_base=ip).status_code, 429)
+		other   = self.client.get(url, buffered=False, environ_base={'REMOTE_ADDR': '198.51.100.5'})
+		self.assertEqual(other.status_code, 200)
+		other.close()
+		next(streams[0].response)
+		streams[0].close()
+		streams[1].close()
+		streams = streams[2:] + [self.client.get(url, buffered=False, environ_base=ip) for _ in range(2)]
+		self.assertTrue(all(r.status_code == 200 for r in streams))
+		self.assertEqual(self.client.get(url, buffered=False, environ_base=ip).status_code, 429)
+		for r in streams:
+			r.close()
+		self.assertNotIn('198.51.100.3', server.STREAM_IPS)
 
 
 class TestArcade(unittest.TestCase):

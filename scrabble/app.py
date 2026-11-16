@@ -33,6 +33,7 @@ PUBLIC_URL = os.environ.get('SCRABBLE_PUBLIC_URL', '').rstrip('/') # canonical s
 
 ROOMS_LOCK = threading.RLock()
 MAX_ROOMS = 100
+MAX_ROOMS_PER_IP = 5 # open (not game over) rooms one IP may have created at once
 ROOM_TIMEOUT_SECONDS = 24 * 60 * 60
 CHAT_MAX = 100
 CHAT_TEXT_MAX = 100
@@ -159,6 +160,8 @@ def current_names(record: dict) -> dict:
 SUBSCRIBERS = {}
 SUBSCRIBERS_LOCK = threading.Lock()
 STREAM_USERS = {} # open event stream queue -> signed in user id, for arcade presence
+STREAM_IPS = {} # client IP -> open event stream count
+MAX_STREAMS_PER_IP = 20 # concurrent /events streams one IP may hold
 PRESENCE_INTERVAL = 30
 
 
@@ -215,8 +218,12 @@ def events():
 		rid = room['_rid']
 		user_ids = room.get('user_ids') or []
 		uid = user_ids[_slot] if 0 <= _slot < len(user_ids) else None
+	ip = request.remote_addr
 	q = queue.Queue(maxsize=64)
 	with SUBSCRIBERS_LOCK:
+		if STREAM_IPS.get(ip, 0) >= MAX_STREAMS_PER_IP:
+			return Response('event: error\ndata: too_many_streams\n\n', mimetype='text/event-stream', status=429)
+		STREAM_IPS[ip] = STREAM_IPS.get(ip, 0) + 1
 		SUBSCRIBERS.setdefault(rid, []).append(q)
 		if uid is not None:
 			STREAM_USERS[q] = uid
@@ -243,12 +250,20 @@ def events():
 				if not subs:
 					SUBSCRIBERS.pop(rid, None)
 
-	return Response(stream(), mimetype='text/event-stream', headers={
+	def release_ip():
+		with SUBSCRIBERS_LOCK:
+			STREAM_IPS[ip] -= 1
+			if STREAM_IPS[ip] <= 0:
+				STREAM_IPS.pop(ip, None)
+
+	resp = Response(stream(), mimetype='text/event-stream', headers={
 		'Content-Type': 'text/event-stream; charset=utf-8',
 		'Cache-Control': 'no-cache, no-transform, no-store',
 		'X-Accel-Buffering': 'no',
 		'Connection': 'keep-alive',
 	})
+	resp.call_on_close(release_ip) # runs when the server closes the response, even if the stream never started or raised
+	return resp
 
 
 ROOM_ID_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789'
@@ -376,6 +391,9 @@ def create_room():
 	reap_old_rooms()
 	if len(rooms) >= MAX_ROOMS:
 		return jsonify({'error': f'Server full (max {MAX_ROOMS} concurrent rooms). Try again later.'}), 503
+	ip = request.remote_addr
+	if sum(1 for r in rooms.values() if r.get('creator_ip') == ip and not r['game']['game_over']) >= MAX_ROOMS_PER_IP:
+		return jsonify({'error': f'you already have {MAX_ROOMS_PER_IP} open rooms, finish or leave one first'}), 429
 	data = request.get_json(silent=True) or {}
 	user_id = get_request_user_id()
 	name = clean_name(data.get('name')) or 'P1'
@@ -404,6 +422,7 @@ def create_room():
 						   transparent_mode=transparent_mode, vs_computer=vs_computer, ai_difficulty=ai_difficulty,
 						   ai_style=ai_style)
 	rooms[rid]['_rid'] = rid
+	rooms[rid]['creator_ip'] = ip
 	token = secrets.token_urlsafe(16)
 	rooms[rid]['players'][token] = 0
 	if user_id is not None:
