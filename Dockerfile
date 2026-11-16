@@ -21,12 +21,15 @@ COPY scrabble/ .
 
 # Persistent data directory (mount a volume here for room/metrics persistence)
 ENV SCRABBLE_DATA_DIR=/data
-RUN mkdir -p /data
+# Run as an unprivileged user that owns only the data directory
+RUN adduser -D -u 10001 app && mkdir -p /data && chown app:app /data
 
 # Write app logs to docker logs immediately
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 1337
+
+USER app
 
 # Start gunicorn with a single gevent worker (room state lives in process memory)
 CMD ["gunicorn", "--worker-class", "gevent", "--workers", "1", "--worker-connections", "1000", "--graceful-timeout", "5", "--bind", "0.0.0.0:1337", "app:app"]

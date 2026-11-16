@@ -11,6 +11,7 @@ if [ -n "$SCRABBLE_PUBLIC_URL" ]; then
 	set -- "$@" -e SCRABBLE_PUBLIC_URL
 fi
 docker build -t scrabble .
+docker run --rm --user root -v scrabble_data:/data scrabble chown -R app:app /data # data made by older root containers
 docker rm -f scrabble 2>/dev/null || true
 docker run -d \
 	--name scrabble \
