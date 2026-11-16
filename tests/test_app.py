@@ -39,6 +39,7 @@ class TestApp(unittest.TestCase):
 		'''Create a test client.'''
 
 		self.client = server.app.test_client()
+		auth.ATTEMPTS.clear()
 
 
 	def call(self, path: str, body: dict = None, auth_token: str = '') -> tuple:
@@ -151,6 +152,33 @@ class TestApp(unittest.TestCase):
 		self.call('/auth/logout', {'auth_token': data['auth_token']})
 		self.assertIsNone(self.call('/auth/me', auth_token=data['auth_token'])[0]['user'])
 		self.assertIn('ARCADE_PUBLIC_URL = "";', self.client.get('/').get_data(as_text=True))
+
+
+	def test_standalone_captcha_limits(self):
+		'''The captcha SVG has no text, the store keeps at most CAPTCHA_MAX, and the 31st captcha a minute from one IP is refused.'''
+
+		self.assertTrue(set(auth.CAPTCHA_CHARS) <= set(auth.GLYPHS))
+		self.assertNotIn('<text', self.call('/auth/captcha')[0]['svg'])
+		with mock.patch.object(auth, 'CAPTCHA_MAX', 3):
+			ids = [auth.captcha_create()['captcha_id'] for _ in range(5)]
+			self.assertEqual(list(auth.CAPTCHAS), ids[2:])
+		ip    = {'REMOTE_ADDR': '198.51.100.6'}
+		codes = [self.client.get('/auth/captcha', environ_base=ip).status_code for _ in range(31)]
+		self.assertEqual((codes[:30].count(200), codes[30]), (30, 429))
+		self.assertEqual(self.client.get('/auth/captcha', environ_base={'REMOTE_ADDR': '198.51.100.7'}).status_code, 200)
+
+
+	def test_standalone_login_limits(self):
+		'''The 11th failed login for one account is refused even with the right password, and another account still signs in.'''
+
+		for name in ('erin', 'frank'):
+			cap  = self.call('/auth/captcha')[0]
+			text = auth.CAPTCHAS[cap['captcha_id']][0]
+			self.assertEqual(self.call('/auth/signup', {'username': name, 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': text})[1], 200)
+		codes = [self.call('/auth/login', {'username': 'Erin' if i % 2 else 'erin', 'password': 'nope'})[1] for i in range(10)]
+		self.assertEqual(codes, [401] * 10)
+		self.assertEqual(self.call('/auth/login', {'username': 'erin', 'password': 'hunter22x'}), ({'error': 'Too many failed logins, try again in 15 minutes'}, 429))
+		self.assertEqual(self.call('/auth/login', {'username': 'frank', 'password': 'hunter22x'})[1], 200)
 
 
 	def test_standalone_no_cookie(self):

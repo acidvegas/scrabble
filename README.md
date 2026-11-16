@@ -18,6 +18,7 @@ Players create a room and share its 4-character code. Words are checked against 
 | AI          | Play against the computer at difficulty 1-100, or as "Stacker", which goes for the most words per play |
 
 - Optional accounts *(username, password and a captcha)* track wins, streaks, best plays and most-played words
+- Failed logins are limited per account and per IP, and the captcha is drawn as paths so its answer is not in the markup
 - Signed-in players earn a hint token for every 5 wins, up to 5 tokens
 - Per-room chat, move history, an unseen-tile tracker and rematches
 - Global leaderboard for classic and random games

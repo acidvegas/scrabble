@@ -17,7 +17,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import arcade
 import move_gen
-from auth import USERNAME_RE, arcade_sync_loop, captcha_create, captcha_verify, create_session, get_request_user_id, get_username
+from auth import USERNAME_RE, arcade_sync_loop, attempt, blocked, captcha_create, captcha_verify, create_session, get_request_user_id, get_username
 from game import AI_TOKEN, MAX_PLAYERS_CAP, MIN_PLAYERS, SPECTATOR_SLOT, SPEED_MAX_TURNS, SPEED_TURN_SECONDS, advance_turn, after_action_speed, ai_take_turn, apply_play, check_placement, check_speed_timeout, clean_name, clean_placements, end_turn, filled_slots, finalize_game, get_ai_slot, new_game, new_room, placement_words, player_has_moves, rack_value, record_history, set_last_action, touch_room, unseen_counts, highest_active_other
 from storage import DB_LOCK, HINT_TOKEN_CAP, WINS_PER_TOKEN, backup_loop, db_connect, delete_room_persisted, get_hint_tokens, init_db, load_rooms, meta_get, prune_sessions, run_daily_backup, save_room
 from words import DICTIONARY, WORD_TRIE, check_dictionary, fetch_definition
@@ -1143,6 +1143,9 @@ def post_chat():
 def auth_captcha():
 	if arcade.enabled():
 		return jsonify(arcade.captcha())
+	if blocked('captcha', request.remote_addr):
+		return jsonify({'error': 'Too many captchas, wait a minute'}), 429
+	attempt('captcha', request.remote_addr)
 	return jsonify(captcha_create())
 
 
@@ -1186,10 +1189,14 @@ def auth_login():
 		return jsonify({'error': 'Username and password required'}), 400
 	if arcade.enabled():
 		return arcade_session_reply(arcade.login(username, password, request.remote_addr))
+	if blocked('account', username.lower()) or blocked('ip', request.remote_addr):
+		return jsonify({'error': 'Too many failed logins, try again in 15 minutes'}), 429
 	with DB_LOCK:
 		with db_connect() as c:
 			row = c.execute('SELECT id, password_hash FROM users WHERE username=?', (username,)).fetchone()
 	if not row or not check_password_hash(row['password_hash'], password):
+		attempt('account', username.lower())
+		attempt('ip', request.remote_addr)
 		return jsonify({'error': 'Invalid username or password'}), 401
 	token = create_session(row['id'])
 	return jsonify({'auth_token': token, 'username': username})
