@@ -19,7 +19,9 @@ import app as server
 import arcade
 import auth
 import game
+import move_gen
 import storage
+import words
 
 
 def wait_called(fn: mock.Mock, timeout: float = 5):
@@ -45,6 +47,22 @@ class TestApp(unittest.TestCase):
 		headers = {'X-Auth-Token': auth_token}
 		resp    = self.client.get(path, headers=headers) if body is None else self.client.post(path, json=body, headers=headers)
 		return resp.get_json(), resp.status_code
+
+
+	def test_move_search_budget(self):
+		'''A full move search stops at SEARCH_SECONDS with the moves found so far, and the quick "any move?" check is not cut short.'''
+
+		room = game.new_room()
+		g    = room['game']
+		for i, ch in enumerate('RETAINS'):
+			g['board'][7][4 + i] = ch
+		args = (g['board'], list('__ESRAT'), g['bonus_board'], g['blanks'], words.WORD_TRIE, words.DICTIONARY)
+		with mock.patch.object(move_gen, 'SEARCH_SECONDS', 0.2):
+			start = time.monotonic()
+			moves = move_gen.generate_moves(*args)
+			self.assertLess(time.monotonic() - start, 0.5)
+			self.assertTrue(moves)
+			self.assertTrue(move_gen.has_any_move(*args))
 
 
 	def test_bluffs_skip_records(self):
