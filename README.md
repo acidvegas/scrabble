@@ -1,8 +1,44 @@
-# Scrabble
+<h1 align="center">
+  <img src=".github/logo.png" alt="Scrabble" width="640">
+</h1>
 
-Multiplayer Scrabble in the browser, built with Flask. It runs live at [scrabble.supernets.org](https://scrabble.supernets.org).
+<p align="center"><b>Multiplayer Scrabble in the browser, built with Flask.</b></p>
+
+<p align="center">
+  <a href="https://scrabble.supernets.org"><img src="https://img.shields.io/badge/play-scrabble.supernets.org-4dd17a?style=for-the-badge" alt="Play now"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/flask-3.1-000000?logo=flask&logoColor=white" alt="Flask 3.1">
+  <img src="https://img.shields.io/badge/docker-ready-2496ed?logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/words-NWL2023-f6dc98" alt="NWL2023">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-ISC-a98bff" alt="ISC License"></a>
+</p>
+
+<p align="center">
+  <img src=".github/screenshots/classic.png" alt="A classic game against the computer" width="860">
+</p>
 
 Players create a room and share its 4-character code. Words are checked against the NWL2023 word list, and each play shows the definitions of the words it formed.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/screenshots/random.png" alt="Random mode board"></td>
+    <td width="50%"><img src=".github/screenshots/lobby.png" alt="Room setup"></td>
+  </tr>
+  <tr>
+    <td align="center"><i>Random mode, with shuffled bonus squares and blocked cells</i></td>
+    <td align="center"><i>Room setup</i></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src=".github/screenshots/mobile.png" alt="Playing on a phone" width="300"><br>
+  <i>Playing on a phone</i>
+</p>
 
 ## Features
 
@@ -85,12 +121,12 @@ Rooms with no activity for 24 hours are removed. The server holds at most 100 ro
 
 Scrabble can optionally use [acid-arcade-db](https://github.com/acidvegas/acid-arcade-db) for accounts, so one username and password works on every acid-arcade game. Without `ARCADE_URL` it keeps its own accounts and needs nothing else.
 
-| Variable            | Purpose                                                                               |
-|---------------------|---------------------------------------------------------------------------------------|
-| `ARCADE_URL`        | Internal acid-arcade-db API *(e.g. `http://acid-arcade-db:20021`)*. Turns the mode on |
+| Variable            | Purpose                                                                                                                                                                                                                                    |
+|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ARCADE_URL`        | Internal acid-arcade-db API *(e.g. `http://acid-arcade-db:20021`)*. Turns the mode on                                                                                                                                                      |
 | `ARCADE_PUBLIC_URL` | Public acid-arcade-db site, used for profile pictures and the account settings link. `{domain}` is replaced with the player's parent domain *(default `https://arcade.{domain}`, so scrabble.supernets.org links to arcade.supernets.org)* |
-| `ARCADE_GAME`       | This game's slug in acid-arcade-db, `scrabble`                                        |
-| `ARCADE_KEY`        | This game's key, needed when acid-arcade-db has `ARCADE_GAME_KEYS` set                |
+| `ARCADE_GAME`       | This game's slug in acid-arcade-db, `scrabble`                                                                                                                                                                                             |
+| `ARCADE_KEY`        | This game's key, needed when acid-arcade-db has `ARCADE_GAME_KEYS` set                                                                                                                                                                     |
 
 In this mode login, signup and sessions go through acid-arcade-db, and the local `users` table only mirrors those accounts. Renames and account deletions are picked up every 60 seconds, and each player's wins and stats are sent to their arcade profile when a game ends. If acid-arcade-db is down, account requests answer `503`. Running `ARCADE_URL=http://acid-arcade-db:20021 ./setup.sh` joins the container to the `arcade` Docker network and passes these variables.
 
