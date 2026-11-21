@@ -22,6 +22,7 @@ import arcade
 import auth
 import game
 import move_gen
+import progress
 import storage
 import words
 
@@ -558,6 +559,89 @@ class TestArcade(unittest.TestCase):
 		with mock.patch.object(arcade, 'sso', side_effect=arcade.ArcadeDown('refused')):
 			self.client.set_cookie(arcade.COOKIE, 'tok-a')
 			self.assertEqual(self.client.get('/auth/sso').status_code, 503)
+
+
+
+class TestProgress(unittest.TestCase):
+	'''Levels, XP and tile style unlocks from games against the computer.'''
+
+	def setUp(self):
+		'''Create a test client.'''
+
+		self.client = server.app.test_client()
+		auth.ATTEMPTS.clear()
+
+
+	def ended(self, uid: int, reason: str, scores: list, difficulty: int = 60, vs_computer: bool = True, plays: list = None, **room_kw) -> dict:
+		'''Finish a 1-on-1 game for uid in seat 0, after recording plays [(placements, words, score)] for that seat.'''
+
+		room = game.new_room(vs_computer=vs_computer, ai_difficulty=difficulty, **room_kw)
+		room.update({'_rid': 'prog', 'user_ids': [uid, None]})
+		g = room['game']
+		for placements, word_list, score in plays or []:
+			g['scores'][0] += score
+			progress.note_play(g, 0, placements, word_list, score, True)
+		g.update({'scores': scores, 'moves': [9, 9]})
+		game.finalize_game(room, reason)
+		return room
+
+
+	def test_levels_and_xp(self):
+		'''Level N needs 100 * N^1.6 XP, and XP scales with difficulty, winning and bonuses.'''
+
+		self.assertEqual((progress.level_for(0), progress.level_for(302), progress.level_for(303)), (1, 1, 2))
+		self.assertEqual(progress.level_for(progress.xp_for(100)), 100)
+		base = {'stacker': False, 'raw_diff': 100, 'score': 400, 'won': True, 'bingos': 1, 'plays50': 2, 'speed': True, 'random': False}
+		self.assertEqual(progress.game_xp(base), round(50 * 2.0 * 2 + 25 + 20 + 5))
+		self.assertEqual(progress.game_xp({**base, 'raw_diff': 1, 'won': False, 'bingos': 0, 'plays50': 0, 'speed': False}), 5)
+
+
+	def test_unlocks_and_streaks(self):
+		'''A win unlocks its styles once, a forfeit gives no XP and ends streaks, and abandoned or human games count for nothing.'''
+
+		bingo = ([{'row': 7, 'col': c, 'letter': ch, 'blank': False} for c, ch in enumerate('QUIZZED')], [('QUIZZED', [(7, c, ch, True) for c, ch in enumerate('QUIZZED')])], 120)
+		room = self.ended(9101, 'tiles_out', [420, 300], plays=[bingo])
+		res  = room['game']['progress']['0']
+		self.assertGreater(res['xp'], 0)
+		self.assertTrue({'mint', 'cardboard', 'marble', 'moss', 'storm', 'bubblegum', 'sticky-note', 'ember'} <= set(res['unlocked']))
+		self.assertNotIn('granite', res['unlocked'])
+		self.assertEqual(room['levels'][0], res['level'])
+		view = progress.player_view(9101)
+		self.assertEqual(view['xp'], res['total_xp'])
+		self.assertEqual([s['name'] for s in view['styles'] if s['id'] == 'royal'], ['???'])
+		self.assertEqual(next(s for s in view['styles'] if s['id'] == 'ruby')['progress'], [1, 3])
+		res = self.ended(9101, 'tiles_out', [420, 300])['game']['progress']['0']
+		self.assertNotIn('marble', res['unlocked'])
+		self.assertEqual(next(s for s in progress.player_view(9101)['styles'] if s['id'] == 'ruby')['progress'], [2, 3])
+		res = self.ended(9101, 'forfeit', [100, 300])['game']['progress']['0']
+		self.assertEqual((res['xp'], res['unlocked']), (0, []))
+		self.assertEqual(next(s for s in progress.player_view(9101)['styles'] if s['id'] == 'ruby')['progress'], [0, 3])
+		for reason, kw in (('timeout', {}), ('tiles_out', {'vs_computer': False}), ('tiles_out', {'max_players': 3})):
+			self.assertNotIn('progress', self.ended(9102, reason, [400, 100] + ([0] if kw.get('max_players') else []), **kw)['game'])
+		self.assertEqual(progress.player_view(9102)['xp'], 0)
+
+
+	def test_style_routes(self):
+		'''Locked styles are refused, an unlocked one shows in the rooms the player sits in, and Speed works against the computer.'''
+
+		cap    = self.client.get('/auth/captcha').get_json()
+		text   = auth.CAPTCHAS[cap['captcha_id']][0]
+		tok    = self.client.post('/auth/signup', json={'username': 'stylist', 'password': 'hunter22x', 'captcha_id': cap['captcha_id'], 'captcha_answer': text}).get_json()['auth_token']
+		hdr    = {'X-Auth-Token': tok}
+		uid    = self.client.get('/auth/me', headers=hdr).get_json()['user']['user_id']
+		a      = self.client.post('/create_room', json={'name': 'X', 'vs_computer': True, 'speed': True}, headers=hdr).get_json()
+		s      = self.client.get(f'/state?room_id={a["room_id"]}&player_token={a["player_token"]}').get_json()
+		self.assertTrue(s['speed_mode'] and s['turn_deadline'])
+		self.assertEqual((s['styles'][0], s['levels'][0]), ('classic', 1))
+		self.assertEqual(self.client.post('/auth/style', json={'style': 'mint'}, headers=hdr).status_code, 403)
+		self.assertEqual(self.client.post('/auth/style', json={'style': 'nope'}, headers=hdr).status_code, 403)
+		self.ended(uid, 'tiles_out', [300, 200])
+		self.assertEqual(self.client.post('/auth/style', json={'style': 'mint'}, headers=hdr).status_code, 200)
+		s = self.client.get(f'/state?room_id={a["room_id"]}&player_token={a["player_token"]}').get_json()
+		self.assertEqual(s['styles'][0], 'mint')
+		view = self.client.get('/auth/progress', headers=hdr).get_json()
+		self.assertEqual((view['style'], view['total']), ('mint', 113))
+		self.assertIn(uid, [r['user_id'] for r in self.client.get('/leaderboard').get_json()['top_levels']])
 
 
 
