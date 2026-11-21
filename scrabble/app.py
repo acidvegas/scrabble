@@ -17,6 +17,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import arcade
 import move_gen
+import progress
 from auth import USERNAME_RE, arcade_sync_loop, attempt, blocked, captcha_create, captcha_verify, create_session, get_request_user_id, get_username
 from game import AI_TOKEN, MAX_PLAYERS_CAP, MIN_PLAYERS, SPECTATOR_SLOT, SPEED_MAX_TURNS, SPEED_TURN_SECONDS, advance_turn, after_action_speed, ai_take_turn, apply_play, check_placement, check_speed_timeout, clean_name, clean_placements, end_turn, filled_slots, finalize_game, get_ai_slot, new_game, new_room, placement_words, player_has_moves, rack_value, record_history, set_last_action, touch_room, unseen_counts, highest_active_other
 from storage import DB_LOCK, HINT_TOKEN_CAP, WINS_PER_TOKEN, backup_loop, db_connect, delete_room_persisted, get_hint_tokens, init_db, load_rooms, meta_get, prune_sessions, run_daily_backup, save_room
@@ -75,6 +76,7 @@ def save_rooms():
 
 
 init_db()
+progress.init_db()
 rooms = load_rooms()
 reap_old_rooms()
 atexit.register(save_rooms)
@@ -320,6 +322,7 @@ def maybe_run_ai(room):
 		return False
 	rid = room.get('_rid')
 	ai_take_turn(room)
+	after_action_speed(room, ai_slot)
 	touch_room(room)
 	save_room(rid, room)
 	notify_room(rid)
@@ -395,6 +398,15 @@ def no_cache(response):
 	return response
 
 
+def seat_profile(room: dict, slot: int, user_id: int):
+	'''Remember a seated player's tile style and level in the room, so /state needs no database lookups.'''
+
+	n = room.get('max_players', 2)
+	style, level = progress.profile(user_id)
+	room.setdefault('styles', [progress.DEFAULT_STYLE] * n)[slot] = style
+	room.setdefault('levels', [None] * n)[slot] = level
+
+
 @app.route('/create_room', methods=['POST'])
 @rooms_locked
 def create_room():
@@ -440,6 +452,7 @@ def create_room():
 		if uname:
 			name = uname
 		rooms[rid]['user_ids'][0] = user_id
+		seat_profile(rooms[rid], 0, user_id)
 	rooms[rid]['names'][0] = name
 	if vs_computer:
 		ai_slot = get_ai_slot(rooms[rid]['game'])
@@ -449,6 +462,8 @@ def create_room():
 		# For 3+ player AI rooms, wait until other humans join (same as regular multiplayer).
 		if max_players == 2:
 			rooms[rid]['game']['started_at'] = time.time()
+			if speed:
+				rooms[rid]['game']['turn_deadline'] = time.time() + SPEED_TURN_SECONDS
 	touch_room(rooms[rid])
 	save_room(rid, rooms[rid])
 	notify_room(rid)
@@ -493,6 +508,7 @@ def join_room():
 		if len(room['user_ids']) < max_players:
 			room['user_ids'].extend([None] * (max_players - len(room['user_ids'])))
 		room['user_ids'][slot] = user_id
+		seat_profile(room, slot, user_id)
 	room['names'][slot] = name
 	if room['game']['started_at'] is None:
 		room['game']['started_at'] = time.time()
@@ -676,6 +692,9 @@ def state():
 		'rematch_declined_by': room.get('rematch_declined_by'),
 		'history': game.get('history', []) or [],
 		'hint_tokens': get_hint_tokens(uid) if uid is not None else 0,
+		'styles': room.get('styles') or [],
+		'levels': room.get('levels') or [],
+		'progress': (game.get('progress') or {}).get(str(slot)),
 	})
 
 
@@ -823,6 +842,7 @@ def hint():
 						  (HINT_TOKEN_CAP, uid))
 				c.commit()
 		return jsonify({'error': 'No possible plays with your rack — token refunded', 'refunded': True}), 200
+	progress.note_action(game, slot, 'hints')
 	best = max(moves, key=lambda m: m['score'])
 	cells = [{'row': p['row'], 'col': p['col']} for p in best['placements']]
 	return jsonify({'cells': cells, 'tokens_remaining': max(0, tokens - 1)})
@@ -844,6 +864,7 @@ def pass_turn():
 	acted = game['current']
 	game['consecutive_passes'] += 1
 	game['moves'][acted] += 1
+	progress.note_action(game, acted, 'passes')
 	set_last_action(game, acted, 'pass')
 	end_turn(room, acted)
 	record_history(room, acted, 'pass')
@@ -889,6 +910,7 @@ def swap():
 	random.shuffle(game['bag'])
 	game['racks'][game['current']] = new_rack
 	acted = game['current']
+	progress.note_action(game, acted, 'swaps')
 	game['moves'][acted] += 1
 	game['consecutive_passes'] = 0
 	set_last_action(game, acted, 'swap')
@@ -1308,6 +1330,36 @@ def auth_stats():
 	})
 
 
+@app.route('/auth/progress', methods=['GET'])
+def auth_progress():
+	'''The signed in player's level, XP and tile styles.'''
+
+	uid = get_request_user_id()
+	if uid is None:
+		return jsonify({'error': 'Not authenticated'}), 401
+	return jsonify(progress.player_view(uid))
+
+
+@app.route('/auth/style', methods=['POST'])
+@rooms_locked
+def auth_style():
+	'''Choose an unlocked tile style. Rooms the player sits in pick it up right away.'''
+
+	uid = get_request_user_id()
+	if uid is None:
+		return jsonify({'error': 'Not authenticated'}), 401
+	sid = str((request.get_json(silent=True) or {}).get('style') or '')
+	if not progress.set_style(uid, sid):
+		return jsonify({'error': 'That style is locked'}), 403
+	for rid, room in rooms.items():
+		uids = room.get('user_ids') or []
+		if uid in uids:
+			room.setdefault('styles', [progress.DEFAULT_STYLE] * room.get('max_players', 2))[uids.index(uid)] = sid
+			save_room(rid, room)
+			notify_room(rid)
+	return jsonify({'ok': True, 'style': sid})
+
+
 @app.route('/auth/active_rooms', methods=['GET'])
 @rooms_locked
 def auth_active_rooms():
@@ -1344,6 +1396,7 @@ def leaderboard():
 	return jsonify({
 		'classic': mode_block('classic', rows_classic),
 		'random': mode_block('random', rows_random),
+		'top_levels': [{'user_id': u, 'player': get_username(u) or '?', 'level': lvl, 'xp': xp} for u, xp, lvl in progress.top_levels(limit)],
 	})
 
 

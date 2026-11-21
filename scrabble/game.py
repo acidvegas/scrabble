@@ -5,6 +5,7 @@ import random
 import time
 
 import move_gen
+import progress
 from boards import make_bonus_board
 from storage import record_game_end, record_play_metrics
 from words import DICTIONARY, WORD_TRIE, check_dictionary, fetch_definition
@@ -39,6 +40,7 @@ def check_speed_timeout(room):
 		game['moves'][current] += 1
 		game['missed_turns'][current] += 1
 		set_last_action(game, current, 'timeout')
+		progress.note_action(game, current, 'passes')
 		if game['missed_turns'][current] >= SPEED_MAX_MISSES:
 			finalize_game(room, 'inactive', forced_winner=highest_active_other(game, current))
 			break
@@ -115,6 +117,10 @@ def finalize_game(room, reason, forced_winner=None):
 		record_game_end(room, reason)
 	except Exception:
 		pass
+	try:
+		progress.record_game(room, reason)
+	except Exception as e:
+		print(f'progress record_game failed: {e}')
 
 
 AI_TOKEN = '__ai__'
@@ -283,7 +289,6 @@ def clean_name(raw):
 def new_room(mode='classic', speed=False, max_players=2, challenge_mode=False, transparent_mode=False,
 			 vs_computer=False, ai_difficulty=50, ai_style='score'):
 	if vs_computer:
-		speed = False
 		challenge_mode = False
 		transparent_mode = False
 	max_players = max(MIN_PLAYERS, min(MAX_PLAYERS_CAP, int(max_players or 2)))
@@ -471,8 +476,10 @@ def apply_play(room, slot, placements):
 	} if challenge_mode else None
 	record_history(room, slot, 'play', words=word_list, score=score)
 	user_ids = room.get('user_ids') or []
+	all_valid = all(check_dictionary(w) for w in word_list)
+	progress.note_play(game, slot, placements, words, score, all_valid)
 	try:
-		if all(check_dictionary(w) for w in word_list): # an unchallenged bluff scores in the game but never counts toward records or stats
+		if all_valid: # an unchallenged bluff scores in the game but never counts toward records or stats
 			record_play_metrics(word_list, room['names'][slot] or f'P{slot + 1}', score, room.get('_rid'), game.get('mode', 'classic'), user_id=user_ids[slot] if slot < len(user_ids) else None)
 	except Exception:
 		pass

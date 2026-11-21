@@ -465,16 +465,19 @@ function renderBoard() {
 				cell.classList.add('has-tile', 'pending');
 				if (state.mySlot !== null) cell.classList.add('owner-' + state.mySlot);
 				renderTileInto(cell, pending.letter, pending.blank);
+				applyTileStyle(cell, tileStyleOf(state.mySlot));
 			} else if (oppPendingMap[key]) {
 				const op = oppPendingMap[key];
 				cell.classList.add('has-tile', 'pending', 'opp-pending');
 				cell.classList.add('owner-' + op.owner);
 				renderTileInto(cell, op.letter, op.blank);
+				applyTileStyle(cell, tileStyleOf(op.owner));
 			} else if (placed) {
 				cell.classList.add('has-tile');
 				const owner = state.tileOwners && state.tileOwners[r] ? state.tileOwners[r][c] : null;
 				if (owner != null) cell.classList.add('owner-' + owner);
 				renderTileInto(cell, placed, state.blanks[r][c]);
+				if (owner != null) applyTileStyle(cell, tileStyleOf(owner));
 			} else if (bonus) {
 				cell.classList.add(bonus);
 				if (bonus !== 'ST') cell.dataset.bonus = bonus;
@@ -705,6 +708,19 @@ function renderBoard() {
 	}
 }
 
+// Unlockable tile styles: "classic" keeps the room's per-player color, any other style is drawn by tiles.css
+function tileStyleOf(slot) {
+	const style = slot == null ? null : (state.styles || [])[slot];
+	return style && style !== 'classic' ? style : null;
+}
+
+function applyTileStyle(el, style) {
+	if (!style) return;
+	el.classList.add('styled', 'ts-' + style);
+	el.style.setProperty('--fx-t', `-${Math.round(performance.now())}ms`); // effects keep their phase when the board redraws
+	el.insertAdjacentHTML('afterbegin', '<i class="fx"></i><i class="fx2"></i><i class="own"></i>');
+}
+
 function renderTileInto(cell, letter, isBlank) {
 	const letterEl = document.createElement('span');
 	letterEl.className = 'tile-letter' + (isBlank ? ' tile-blank' : '');
@@ -733,7 +749,8 @@ function renderRack() {
 		if (state.swapMode && state.swapSelection.has(item.id)) tile.classList.add('swap-mark');
 		if (drag && drag.source === 'rack' && drag.rackId === item.id) tile.classList.add('dragging');
 		const display = item.letter === '_' ? '?' : item.letter;
-		tile.innerHTML = `${display}<span class="tile-value">${item.letter === '_' ? '0' : (LETTER_VALUES[item.letter] || 0)}</span>`;
+		tile.innerHTML = `<span class="rt-letter">${display}</span><span class="tile-value">${item.letter === '_' ? '0' : (LETTER_VALUES[item.letter] || 0)}</span>`;
+		applyTileStyle(tile, tileStyleOf(state.mySlot));
 		tile.dataset.id = item.id;
 		tile.setAttribute('role', 'img');
 		tile.setAttribute('aria-label', (item.letter === '_' ? 'blank' : `${item.letter}, ${LETTER_VALUES[item.letter] || 0} point${LETTER_VALUES[item.letter] === 1 ? '' : 's'}`) + (tile.classList.contains('swap-mark') ? ', selected for swap' : ''));
@@ -757,7 +774,9 @@ function renderScores() {
 		const pct = total === 0 ? (100 / activeSlots.length) : (sc / total) * 100;
 		const isActive = state.current === i;
 		const name = state.names[i] || `P${i + 1}`;
-		const labelHtml = `<span class="player-label" id="name-label-${i}">${avatarHtml(state.userIds[i])}${escapeHtml(name)}</span>`;
+		const lvl = (state.levels || [])[i];
+		const lvlHtml = lvl ? `<span class="lvl-badge" title="Level ${lvl}">${lvl}</span>` : '';
+		const labelHtml = `<span class="player-label" id="name-label-${i}">${avatarHtml(state.userIds[i])}${escapeHtml(name)}${lvlHtml}</span>`;
 		const scoreHtml = `<span class="player-score" id="score-val-${i}">${sc}</span>`;
 		const innerOrder = (idx === activeSlots.length - 1) ? `${scoreHtml}${labelHtml}` : `${labelHtml}${scoreHtml}`;
 		html += `<div class="score-half p${i}${isActive ? ' active' : ''}" id="score-tag-p${i}" style="flex-basis:${pct}%">${innerOrder}</div>`;
@@ -775,7 +794,8 @@ function createGhost(letter, isBlank) {
 	g.setAttribute('aria-hidden', 'true');
 	const display = letter === '_' ? '?' : letter;
 	const value = letter === '_' || isBlank ? '0' : (LETTER_VALUES[letter] || 0);
-	g.innerHTML = `${display}<span class="tile-value">${value}</span>`;
+	g.innerHTML = `<span class="rt-letter">${display}</span><span class="tile-value">${value}</span>`;
+	applyTileStyle(g, tileStyleOf(state.mySlot));
 	document.body.appendChild(g);
 	return g;
 }
@@ -1357,6 +1377,9 @@ async function loadState(preservePending) {
 	state.moves = s.moves || [0, 0];
 	state.chat = s.chat || [];
 	state.userIds = s.user_ids || [];
+	state.styles = s.styles || [];
+	state.levels = s.levels || [];
+	state.progress = s.progress || null;
 	state.chatSeq = s.chat_seq || 0;
 	state.finalSummary = s.final_summary || null;
 	if (!state.finalSummary) state.endgameShown = false;
@@ -2341,12 +2364,64 @@ function refreshAuthStatus() {
 					</div>
 					<h3 class="profile-section">Most played words</h3>
 					<div class="profile-grid">${tw || '<div class="profile-row"><span>-</span></div>'}</div>
+					<div id="style-picker"></div>
 				`;
+				renderStylePicker(document.getElementById('style-picker'));
 			}
 			profOverlay.classList.remove('hidden');
 		} catch (e) { profContent.textContent = 'Network error'; profOverlay.classList.remove('hidden'); }
 	});
 	profClose.addEventListener('click', () => profOverlay.classList.add('hidden'));
+
+	// Level, XP and the tile style picker in the stats panel
+	async function renderStylePicker(box) {
+		if (!box) return;
+		let d;
+		try {
+			const r = await fetch('/auth/progress', { headers: { 'X-Auth-Token': state.authToken } });
+			d = await r.json();
+			if (!r.ok) return;
+		} catch (e) { return; }
+		const span = Math.max(1, d.next_level_xp - d.level_xp);
+		const pct = Math.min(100, Math.round(100 * (d.xp - d.level_xp) / span));
+		let html = `<h3 class="profile-section">Level ${d.level}</h3>
+			<div class="xp-bar"><span style="width:${pct}%"></span></div>
+			<div class="xp-meta">${d.xp} / ${d.next_level_xp} XP · earn XP by finishing games against the computer</div>
+			<h3 class="profile-section">Tile styles · ${d.unlocked_count} / ${d.total}</h3>`;
+		const families = [];
+		for (const st of d.styles) {
+			if (!families.length || families[families.length - 1].name !== st.family) families.push({ name: st.family, styles: [] });
+			families[families.length - 1].styles.push(st);
+		}
+		for (const fam of families) {
+			html += `<div class="style-family"><h4>${escapeHtml(fam.name)}</h4><div class="style-grid">`;
+			for (const st of fam.styles) {
+				const cls = ['style-opt', st.unlocked ? '' : 'locked', st.id === d.style ? 'selected' : ''].filter(Boolean).join(' ');
+				const prog = st.progress ? `<span class="sprog"><span style="width:${Math.round(100 * st.progress[0] / st.progress[1])}%"></span></span>` : '';
+				const tip = st.unlocked ? st.name : `${st.name}: ${st.unlock}${st.progress ? ` (${st.progress[0]}/${st.progress[1]})` : ''}`;
+				html += `<button type="button" class="${cls}" data-style="${st.id}" data-unlocked="${st.unlocked ? 1 : 0}" title="${escapeHtml(tip)}"><span class="tier-dot tier-${st.tier}"></span>${swatchHtml(st.unlocked || st.tier !== 'secret' ? st.id : null, st.unlocked || st.tier !== 'secret' ? 'A' : '?')}<span class="sname">${escapeHtml(st.name)}</span>${prog}</button>`;
+			}
+			html += '</div></div>';
+		}
+		html += '<div class="style-info" id="style-info">Tap a style to use it or see how to unlock it</div>';
+		box.innerHTML = html;
+		const info = document.getElementById('style-info');
+		box.querySelectorAll('.style-opt').forEach(btn => {
+			btn.addEventListener('click', async () => {
+				const st = d.styles.find(x => x.id === btn.dataset.style);
+				if (btn.dataset.unlocked !== '1') {
+					info.textContent = `${st.name} (${st.tier}): ${st.unlock}${st.progress ? ` · ${st.progress[0]} / ${st.progress[1]}` : ''}`;
+					return;
+				}
+				const r = await fetch('/auth/style', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Auth-Token': state.authToken }, body: JSON.stringify({ style: st.id }) });
+				if (!r.ok) { info.textContent = 'Could not change style'; return; }
+				d.style = st.id;
+				box.querySelectorAll('.style-opt').forEach(b => b.classList.toggle('selected', b === btn));
+				info.textContent = `Now using ${st.name}`;
+				if (state.roomId && state.playerToken) loadState(true);
+			});
+		});
+	}
 
 	// Signed in on another acid-arcade site of this domain? Swap the shared cookie for a session here (once per page load)
 	let ssoTried = false;
@@ -2392,7 +2467,7 @@ function refreshAuthStatus() {
 	const stackerWrap = document.getElementById('stacker-toggle-wrap');
 	const stackerCb = document.getElementById('stacker-checkbox');
 	if (!cb || !playersPicker || !diffPicker) return;
-	const otherToggles = ['speed-checkbox', 'challenge-checkbox', 'transparent-checkbox']
+	const otherToggles = ['challenge-checkbox', 'transparent-checkbox']
 		.map(id => document.getElementById(id)).filter(Boolean);
 	function refresh() {
 		const on = cb.checked;
@@ -2682,9 +2757,27 @@ function showEndGame() {
 	rowList.push(`<div class="endgame-row"><span class="lbl">Duration</span><span class="val">${fmtDuration(f.duration_seconds)}</span></div>`);
 	rowList.push(`<div class="endgame-row"><span class="lbl">Ended by</span><span class="val">${reasonText}</span></div>`);
 	const rows = rowList.join('');
-	endgameBody.innerHTML = winnerLine + rows;
+	endgameBody.innerHTML = winnerLine + rows + progressHtml(state.progress);
 	endgameOverlay.classList.remove('hidden');
 	updateRematchStatus();
+}
+
+function swatchHtml(style, letter) {
+	const cls = style && style !== 'classic' ? ` styled ts-${style}` : '';
+	const fx = cls ? '<i class="fx"></i><i class="fx2"></i>' : '';
+	return `<span class="swatch${cls}">${fx}<span class="rt-letter">${escapeHtml(letter)}</span></span>`;
+}
+
+function progressHtml(p) {
+	if (!p) return '';
+	let html = `<div class="endgame-progress"><div class="endgame-row"><span class="lbl">XP earned</span><span class="val">+${p.xp}</span></div>`;
+	html += `<div class="endgame-row"><span class="lbl">${p.level > p.level_before ? 'Level up!' : 'Level'}</span><span class="val">${p.level}</span></div>`;
+	html += `<div class="xp-meta">${p.total_xp} / ${p.next_level_xp} XP to level ${p.level + 1}</div>`;
+	(p.unlocked || []).forEach((sid, i) => {
+		const name = (p.unlocked_names || [])[i] || sid;
+		html += `<div class="unlock-row">${swatchHtml(sid, name[0])}<span>Unlocked <b>${escapeHtml(name)}</b></span></div>`;
+	});
+	return html + '</div>';
 }
 
 endgameOverlay.addEventListener('click', (e) => {
@@ -2788,7 +2881,11 @@ function renderModeColumn(data) {
 function renderLeaderboard(data) {
 	const classic = data.classic || { total_games: 0 };
 	const random = data.random || { total_games: 0 };
+	const levels = (data.top_levels || []).map((p, i) =>
+		`<div class="lb-row"><span class="lb-player">${i + 1}. ${avatarHtml(p.user_id)}${escapeHtml(p.player)}</span><span class="lb-meta">Lvl ${p.level} · ${p.xp} XP</span></div>`
+	).join('');
 	leaderboardContent.innerHTML = `
+		${section('Top levels', levels || '<div class="lb-empty">No levels yet</div>')}
 		<div class="lb-columns">
 			<div class="lb-column"><h3 class="lb-mode-title">Classic</h3>${renderModeColumn(classic)}</div>
 			<div class="lb-column"><h3 class="lb-mode-title">Random</h3>${renderModeColumn(random)}</div>
