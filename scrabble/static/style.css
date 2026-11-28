@@ -1696,8 +1696,10 @@ body.is-spectator .rack-wrap { min-height: 0; padding: 6px 8px; }
 	max-width: 92vw;
 	max-height: 88dvh;
 	overflow-y: auto;
+	scrollbar-width: none;
 	box-shadow: 0 10px 0 rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
+.overlay-box::-webkit-scrollbar { display: none; }
 
 .overlay-box h2 {
 	font-size: 24px;
